@@ -14,6 +14,8 @@
 #include <proto/exec.h>
 #include <proto/dos.h>
 #include <proto/bsdsocket.h>
+#include <libraries/locale.h>
+#include <proto/locale.h>
 
 extern struct ExecBase *SysBase;
 extern struct DosLibrary *DOSBase;
@@ -131,14 +133,32 @@ int ot_each_file(const char *dir, const char *suffix,
     return n;
 }
 
+/* The Amiga's time zone: locale.library's loc_GMTOffset, minutes west of
+ * GMT (0 without locale.library). */
+static long gmt_offset(void)
+{
+    struct LocaleBase *LocaleBase = (struct LocaleBase *)OpenLibrary((CONST_STRPTR)"locale.library", 38);
+    struct Locale *loc;
+    long west = 0;
+    if (!LocaleBase) return 0;
+    if ((loc = OpenLocale(NULL))) {
+        west = loc->loc_GMTOffset;
+        CloseLocale(loc);
+    }
+    CloseLibrary((struct Library *)LocaleBase);
+    return west;
+}
+
 int ot_now(uint32_t *days, uint32_t *seconds)
 {
     struct DateStamp ds;
     DateStamp(&ds);
     /* the Amiga counts from 1 January 1978, 722450 days after year 0
-     * (719528 to 1970, then 2922); the clock is local time */
-    *days = (uint32_t)ds.ds_Days + 722450UL;
-    *seconds = (uint32_t)ds.ds_Minute * 60UL + (uint32_t)ds.ds_Tick / TICKS_PER_SECOND;
+     * (719528 to 1970, then 2922); the clock is local time, and
+     * certificates' dates are UTC */
+    ot_local_to_utc((uint32_t)ds.ds_Days + 722450UL,
+                    (uint32_t)ds.ds_Minute * 60UL + (uint32_t)ds.ds_Tick / TICKS_PER_SECOND,
+                    gmt_offset(), days, seconds);
     return 1;
 }
 
@@ -338,3 +358,20 @@ int ot_trust_location(int kind, int i, char *buf, size_t size)
 }
 
 #endif
+
+/* Local time to UTC: west is minutes west of GMT (locale.library's
+ * loc_GMTOffset). One day either way at most, so no sum ever needs more
+ * than 32 bits; an offset beyond a day is not a time zone, and is taken as
+ * 0. */
+void ot_local_to_utc(uint32_t days, uint32_t seconds, long west,
+                     uint32_t *udays, uint32_t *useconds)
+{
+    long s;
+    if (west < -24L * 60 || west > 24L * 60) west = 0;
+    if (seconds > 86399UL) seconds = 86399UL;
+    s = (long)seconds + west * 60L;
+    if (s < 0) { s += 86400L; --days; }
+    else if (s >= 86400L) { s -= 86400L; ++days; }
+    *udays = days;
+    *useconds = (uint32_t)s;
+}

@@ -44,6 +44,9 @@ int ot_each_file(const char *dir, const char *suffix,
 /* the time for certificate dates: days since 1 January of year 0, seconds
  * into the day; 0 when the clock is unknown */
 int ot_now(uint32_t *days, uint32_t *seconds);
+/* local days and seconds (as above) to UTC; west: minutes west of GMT */
+void ot_local_to_utc(uint32_t days, uint32_t seconds, long west,
+                     uint32_t *udays, uint32_t *useconds);
 /* TLS 1.3: records sent under one key before a KeyUpdate (the tests make
  * it small) */
 #define OT_KEY_UPDATE_AFTER (1UL << 23)

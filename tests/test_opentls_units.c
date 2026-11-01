@@ -197,6 +197,31 @@ static void test_ecdsa(const struct ot_impls *m)
     }
 }
 
+/* The Amiga's clock is local time; certificate dates are UTC (ot_now). */
+static void test_local_to_utc(void)
+{
+    uint32_t d, s;
+    const uint32_t day = 740286UL;               /* 1 November 2026, days since year 0 */
+    ot_local_to_utc(day, 12 * 3600UL, 0, &d, &s);
+    CHECK(d == day && s == 12 * 3600UL, "UTC: as it is");
+    ot_local_to_utc(day, 11 * 3600UL + 1800, -60, &d, &s);    /* Berlin in winter, 11:30 */
+    CHECK(d == day && s == 10 * 3600UL + 1800, "UTC+1: an hour back");
+    ot_local_to_utc(day, 1800, -60, &d, &s);                  /* 00:30 in Berlin */
+    CHECK(d == day - 1 && s == 23 * 3600UL + 1800, "UTC+1 after midnight: the day before");
+    ot_local_to_utc(day, 22 * 3600UL, 300, &d, &s);           /* New York, 22:00 */
+    CHECK(d == day + 1 && s == 3 * 3600UL, "UTC-5 late evening: the next day");
+    ot_local_to_utc(day, 0, -14 * 60, &d, &s);                /* Kiribati's +14 */
+    CHECK(d == day - 1 && s == 10 * 3600UL, "UTC+14");
+    ot_local_to_utc(day, 86399, 12 * 60, &d, &s);
+    CHECK(d == day + 1 && s == 12 * 3600UL - 1, "UTC-12 at the day's last second");
+    ot_local_to_utc(day, 1800, -330, &d, &s);                 /* India's half hour */
+    CHECK(d == day - 1 && s == 19 * 3600UL, "UTC+5:30");
+    ot_local_to_utc(day, 3600, 100000L, &d, &s);
+    CHECK(d == day && s == 3600, "an offset past a day is not a zone: as it is");
+    ot_local_to_utc(0, 0, -60, &d, &s);
+    CHECK(d == 0xFFFFFFFFUL && s == 23 * 3600UL, "day 0 wraps as unsigned, no crash");
+}
+
 static void test_api(void)
 {
     struct OTContextConfig cfg;
@@ -294,6 +319,7 @@ int main(void)
     test_rsa(&m);
     test_ecdsa(&m);
     test_api();
+    test_local_to_utc();
     printf("%s (%d failures)\n", failures ? "OPENTLS UNITS FAIL" : "OPENTLS UNITS PASS", failures);
     return failures ? 1 : 0;
 }
