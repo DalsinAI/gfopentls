@@ -1,11 +1,11 @@
-/* OpenCrypto: Ed25519 signature verification (RFC 8032, section 5.1.7).
+/* GFOpenCrypto: Ed25519 signature verification (RFC 8032, section 5.1.7).
  * Copyright (c) 2026 AmigaChrome Team. MIT.
  *
  * Verification handles only public values (a host key, a signature, the
  * signed data), so it need not run in constant time. The check is the
  * cofactorless one OpenSSH and PuTTY make: encode([S]B - [k]A) == R, with
  * S below L and A and R canonical. */
-#include "opencrypto/opencrypto.h"
+#include "gfopencrypto/gfopencrypto.h"
 #include "oc_fe25519.h"
 
 /* d = -121665/121666, 2d and sqrt(-1), as 32 bytes little-endian */

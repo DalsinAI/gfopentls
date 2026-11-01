@@ -1,7 +1,7 @@
-/* opentls.library 1.3: a TLS client for AmigaOS 3.x, on BearSSL
- * (third_party/bearssl, MIT) with OpenCrypto doing the maths that the x86
- * or ARM64 cores can do on AmigaChrome (src/opentls/ot_glue.c).
- * docs/AutoDocs-OpenTLS.md is the contract.
+/* gfopentls.library 1.3: a TLS client for AmigaOS 3.x, on BearSSL
+ * (third_party/bearssl, MIT) with GFOpenCrypto doing the maths that the x86
+ * or ARM64 cores can do on AmiCradle (src/opentls/ot_glue.c).
+ * docs/AutoDocs-GFOpenTLS.md is the contract.
  * MIT licensed and free. Copyright (c) 2026 AmigaChrome Team. */
 #include <exec/types.h>
 #include <exec/resident.h>
@@ -13,7 +13,7 @@
 #include <proto/exec.h>
 
 #include "../src/opentls/ot_internal.h"
-#include <clib/opentls_protos.h>
+#include <clib/gfopentls_protos.h>
 
 #define REG(r, decl) register decl __asm(#r)
 
@@ -29,11 +29,11 @@ int start(void) { return -1; }
 
 static const char lib_name[] = OPENTLSLIB_NAME;
 static const char lib_id[] =
-    "opentls.library 1.3 (20.10.2026) OpenTLS on BearSSL, AmigaChrome Team\r\n";
+    "gfopentls.library 1.3 (20.10.2026) GFOpenTLS on BearSSL, AmigaChrome Team\r\n";
 /* For Version FILE and the Installer: without it, Version only finds the
  * library's version once it is in memory. */
 static const char lib_ver[] __attribute__((used)) =
-    "$VER: opentls.library 1.3 (20.10.2026) OpenTLS on BearSSL, AmigaChrome Team";
+    "$VER: gfopentls.library 1.3 (20.10.2026) GFOpenTLS on BearSSL, AmigaChrome Team";
 
 static struct Library *lib_init(REG(d0, struct OpenTLSLibBase *base),
                                 REG(a0, BPTR seglist),

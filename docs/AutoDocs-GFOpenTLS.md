@@ -1,16 +1,16 @@
-# AutoDocs: opentls.library (API version 1)
+# AutoDocs: gfopentls.library (API version 1)
 
-opentls.library is a TLS client for AmigaOS 3.x, MIT licensed and free. This
+gfopentls.library is a TLS client for AmigaOS 3.x, MIT licensed and free. This
 is its contract. API version 1 was frozen on 9 October 2026: later versions
 only add (new calls at the end of the table, new constants, new fields at the
 end of `struct OTContextConfig`); nothing below changes meaning.
 
-Headers: `<libraries/opentls.h>` (types, constants, error codes),
-`<proto/opentls.h>` (inline calls for GCC and VBCC, base `OpenTLSBase`),
-`<clib/opentls_protos.h>` (prototypes), `fd/opentls_lib.fd`.
+Headers: `<libraries/gfopentls.h>` (types, constants, error codes),
+`<proto/gfopentls.h>` (inline calls for GCC and VBCC, base `OpenTLSBase`),
+`<clib/gfopentls_protos.h>` (prototypes), `fd/gfopentls_lib.fd`.
 `tools/gen_opentls_headers.py` writes the call headers from one table.
 
-Since revision 3 (opentls.library 1.3) the library speaks TLS 1.3 and TLS
+Since revision 3 (gfopentls.library 1.3) the library speaks TLS 1.3 and TLS
 1.2 (and 1.0/1.1 when a caller asks for them). A program that leaves
 `MaxVersion` at 0 gets TLS 1.3 without changes: one ClientHello offers both,
 and a server that answers with TLS 1.2 goes on over the same connection.
@@ -23,7 +23,7 @@ and a server that answers with TLS 1.2 goes on over the same connection.
 - A connection is used by one task at a time. A context may be shared by
   several tasks once it is set up (add trust before sharing it). Sessions
   may be handed between tasks.
-- OpenTLS never opens, closes or changes a socket. The program connects it,
+- GFOpenTLS never opens, closes or changes a socket. The program connects it,
   hands it over, and closes it after `OT_FreeConnection()`.
 - Blocking and non-blocking sockets both work. With a non-blocking socket,
   `OT_Handshake()`, `OT_Read()`, `OT_Write()` and `OT_Close()` may answer
@@ -60,7 +60,7 @@ and a server that answers with TLS 1.2 goes on over the same connection.
 | `OTERR_STATE` | -15 | a call out of order (e.g. `OT_Read()` before the handshake) |
 | `OTERR_RANDOM` | -16 | no entropy |
 | `OTERR_UNSUPPORTED` | -17 | something this version lacks (`MinVersion` `OT_TLS13` before revision 3) |
-| `OTERR_INTERNAL` | -18 | a bug in OpenTLS |
+| `OTERR_INTERNAL` | -18 | a bug in GFOpenTLS |
 | `OTERR_PINNED` | -19 | `OTV_PINNED_ONLY` and the certificate is not the pinned one |
 
 The certificate errors (-10 to -14, -19) leave the peer's certificate
@@ -71,16 +71,16 @@ readable with `OT_GetPeerFingerprint()`, `OT_GetPeerCertificate()` and
 
 Unless `OTCF_NO_SYSTEM_TRUST` is set, a context trusts:
 
-1. `S:OpenTLS/ca-bundle.pem`, or if that is missing
-   `ENVARC:OpenTLS/ca-bundle.pem`: the CA bundle (PEM certificates).
-   OpenUp's OpenTLS part puts Mozilla's CA list in `S:OpenTLS/`, made with
+1. `S:GFOpenTLS/ca-bundle.pem`, or if that is missing
+   `ENVARC:GFOpenTLS/ca-bundle.pem`: the CA bundle (PEM certificates).
+   GFOpenUp's GFOpenTLS part puts Mozilla's CA list in `S:GFOpenTLS/`, made with
    `tools/make_ca_bundle.py` from a `ca-certificates` package (the package
    version and the day are in its first lines), with
-   `S:OpenTLS/ca-bundle.LICENSE` beside it: Mozilla's list is under the
+   `S:GFOpenTLS/ca-bundle.LICENSE` beside it: Mozilla's list is under the
    Mozilla Public License 2.0. An upgrade replaces the bundle. It is in S:,
    not ENVARC:, because the OS copies ENVARC: into ENV:, in RAM, at every
    boot.
-2. every `*.pem` file in `ENVARC:OpenTLS/certs/`: local additions, e.g. a
+2. every `*.pem` file in `ENVARC:GFOpenTLS/certs/`: local additions, e.g. a
    home server's own CA. Read from ENVARC: itself, so a certificate added
    there works at once, without a reboot. Upgrades leave them alone.
 3. only when (1) is missing: `DEVS:Internet/curl-ca-bundle.crt`, then
@@ -184,7 +184,7 @@ clean close). The socket stays open. NULL is allowed.
     LONG OT_SetSocket(struct OTConnection *connection, LONG socket, struct Library *socketBase);
 
 Use a connected bsdsocket.library socket. `socketBase` is the calling task's
-own `SocketBase` (opentls.library calls `recv()`, `send()` and `Errno()`
+own `SocketBase` (gfopentls.library calls `recv()`, `send()` and `Errno()`
 through it, so it must be the base the socket belongs to).
 
 ## OT_SetIOHook
@@ -323,7 +323,7 @@ After a successful handshake: a copy of the connection's session, to resume
 on another connection to the same host (`OT_SetSession()`), even after this
 connection is freed. Free it with `OT_FreeSession()`. NULL if there is none.
 
-TLS 1.3 servers send their tickets after the handshake, and OpenTLS reads
+TLS 1.3 servers send their tickets after the handshake, and GFOpenTLS reads
 them in `OT_Read()`. Called before one has come, `OT_GetSession()` answers a
 session that waits for it: it is filled, in place, by the `OT_Read()` that
 reads the first ticket (and a later one replaces it), while both the
@@ -416,7 +416,7 @@ failed on the certificate too, `OTERR_TRUSTSTORE` included (a fresh Amiga
 without a CA bundle still reaches the server's certificate, so a program
 can ask "trust this server?" and pin it). The string belongs to the
 connection. Check the revision (`OT_Version() & 0xFFFF` at least 1, or
-`OpenLibrary("opentls.library", 1)` and `lib_Revision`) before calling it.
+`OpenLibrary("gfopentls.library", 1)` and `lib_Revision`) before calling it.
 
 ## OT_Random
 
@@ -431,7 +431,7 @@ Fills `buffer` with cryptographically strong random bytes.
     D0
 
 Which maths the x86 or ARM64 cores do on this machine (`OTACC_*`), through
-opencrypto.library; 0 on a real Amiga, where everything runs as 68k code.
+gfopencrypto.library; 0 on a real Amiga, where everything runs as 68k code.
 
 ## OT_SetVersion (version 1, revision 3)
 

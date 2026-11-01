@@ -1,5 +1,5 @@
 #!/bin/sh
-# OpenCrypto's sntrup761 against PuTTY 0.85's (tests/interop_putty.c), on
+# GFOpenCrypto's sntrup761 against PuTTY 0.85's (tests/interop_putty.c), on
 # the PC. PuTTY is MIT (Simon Tatham and contributors); it is not kept here
 # but built from its release tarball, checked against its SHA-256:
 #   PUTTY_TARBALL  putty-0.85.tar.gz (default: fetched from the.earth.li)

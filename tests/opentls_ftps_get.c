@@ -1,5 +1,5 @@
-/* opentls_ftps_get: explicit FTPS (RFC 4217) over opentls.library, the
- * pattern OpenFTP uses: AUTH TLS on the control connection, PBSZ 0,
+/* opentls_ftps_get: explicit FTPS (RFC 4217) over gfopentls.library, the
+ * pattern GFOpenFTP uses: AUTH TLS on the control connection, PBSZ 0,
  * PROT P, and each data connection resuming the control connection's TLS
  * session (servers such as vsftpd with require_ssl_reuse insist).
  *
@@ -7,7 +7,7 @@
  *                    host port user password file
  * Fetches file N times (default 2) and prints key=value lines: each data
  * connection's resumed flag, byte count and a checksum.
- * Same source on the x86 or ARM64 cores and on the Amiga (OpenTLSFTPSGet).
+ * Same source on the x86 or ARM64 cores and on the Amiga (GFOpenTLSFTPSGet).
  *
  * MIT licensed and free. Copyright (c) 2026 AmigaChrome Team. */
 #include <stdio.h>
@@ -18,7 +18,7 @@
 #include <exec/types.h>
 #include <proto/exec.h>
 #include <proto/bsdsocket.h>
-#include <proto/opentls.h>
+#include <proto/gfopentls.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -29,7 +29,7 @@ struct Library *SocketBase;
 #define SOCKBASE SocketBase
 #else
 #include <exec/types.h>
-#include <clib/opentls_protos.h>
+#include <clib/gfopentls_protos.h>
 #include <netdb.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -68,7 +68,7 @@ static long dial(const char *host, int port)
 #endif
 }
 
-/* the control connection: plain until AUTH TLS, then through OpenTLS */
+/* the control connection: plain until AUTH TLS, then through GFOpenTLS */
 static long ctl_sock = -1;
 static struct OTConnection *ctl_tls;
 static char rbuf[4096];
@@ -147,7 +147,7 @@ int main(int argc, char **argv)
     port = atoi(args[1]);
 #ifdef __amigaos__
     if (!(SocketBase = OpenLibrary((CONST_STRPTR)"bsdsocket.library", 4))) return 20;
-    if (!(OpenTLSBase = OpenLibrary((CONST_STRPTR)"opentls.library", 1))) { CloseLibrary(SocketBase); return 20; }
+    if (!(OpenTLSBase = OpenLibrary((CONST_STRPTR)"gfopentls.library", 1))) { CloseLibrary(SocketBase); return 20; }
 #endif
     memset(&cfg, 0, sizeof cfg);
     cfg.Size = sizeof cfg;

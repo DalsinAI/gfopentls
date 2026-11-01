@@ -1,6 +1,6 @@
-/* opentls_client: a small TLS client over opentls.library, for the tests.
- * The same source builds on the x86 or ARM64 cores (over the OpenTLS core,
- * POSIX sockets) and on the Amiga (OpenTLSClient: opentls.library and
+/* opentls_client: a small TLS client over gfopentls.library, for the tests.
+ * The same source builds on the x86 or ARM64 cores (over the GFOpenTLS core,
+ * POSIX sockets) and on the Amiga (GFOpenTLSClient: gfopentls.library and
  * bsdsocket.library).
  *
  *   opentls_client [options] host port
@@ -43,7 +43,7 @@
 #include <proto/dos.h>
 #include <proto/timer.h>
 #include <proto/bsdsocket.h>
-#include <proto/opentls.h>
+#include <proto/gfopentls.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -58,7 +58,7 @@ static struct timerequest treq;
 #else
 #include <exec/types.h>
 #include <utility/hooks.h>
-#include <clib/opentls_protos.h>
+#include <clib/gfopentls_protos.h>
 #include <fcntl.h>
 #include <netdb.h>
 #include <sys/select.h>
@@ -388,7 +388,7 @@ int main(int argc, char **argv)
     }
 #ifdef __amigaos__
     if (!(SocketBase = OpenLibrary((CONST_STRPTR)"bsdsocket.library", 4))) { printf("no bsdsocket.library\n"); return 20; }
-    if (!(OpenTLSBase = OpenLibrary((CONST_STRPTR)"opentls.library", 1))) { printf("no opentls.library\n"); CloseLibrary(SocketBase); return 20; }
+    if (!(OpenTLSBase = OpenLibrary((CONST_STRPTR)"gfopentls.library", 1))) { printf("no gfopentls.library\n"); CloseLibrary(SocketBase); return 20; }
     if (!OpenDevice((CONST_STRPTR)TIMERNAME, UNIT_ECLOCK, (struct IORequest *)&treq, 0))
         TimerBase = treq.tr_node.io_Device;
 #endif

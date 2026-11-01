@@ -1,11 +1,11 @@
-# OpenTLS and OpenCrypto design
+# GFOpenTLS and GFOpenCrypto design
 
 Version 0.1 — 8 October 2026
 
 ## 1. Decision
 
-OpenTLS replaces AmiSSL/OpenSSL as the production TLS dependency of the Open
-Amiga applications. OpenCrypto is part of the same programme and repository,
+GFOpenTLS replaces AmiSSL/OpenSSL as the production TLS dependency of the
+GFOpenAmiga applications. GFOpenCrypto is part of the same programme and repository,
 but remains a separate public library so non-TLS software can use cryptography
 without pulling in the TLS protocol engine.
 
@@ -14,16 +14,16 @@ without pulling in the TLS protocol engine.
 ```text
 application
    |
-opentls.library
+gfopentls.library
    |
-opencrypto.library
+gfopencrypto.library
    |
-68040 reference / AC090 host leaves / OpenService / OpenGPU batches
+68040 reference / AC090 host leaves / GFOpenService / GFOpenGPU batches
 ```
 
 The caller asks for cryptographic work. It never selects an accelerator.
 
-## 3. OpenCrypto 1.0 scope
+## 3. GFOpenCrypto 1.0 scope
 
 - SHA-1, SHA-256, SHA-384, SHA-512
 - HMAC
@@ -39,7 +39,7 @@ The caller asks for cryptographic work. It never selects an accelerator.
 
 The first implementation slice lands SHA-256/HMAC/HKDF and utility primitives.
 
-## 4. OpenTLS scope
+## 4. GFOpenTLS scope
 
 - TLS 1.2 and 1.3 client
 - SNI and ALPN
@@ -47,42 +47,42 @@ The first implementation slice lands SHA-256/HMAC/HKDF and utility primitives.
 - session cache and tickets
 - trust store integration
 - clean socket abstraction suitable for bsdsocket.library
-- curl backend for OpenBrowser
+- curl backend for GFOpenBrowser
 
 ## 5. Acceleration policy
 
 Latency-sensitive one-off ECC/RSA work normally runs on the fastest trusted CPU
-provider. OpenGPU is reserved for demonstrably profitable batches such as bulk
+provider. GFOpenGPU is reserved for demonstrably profitable batches such as bulk
 hash/AEAD work or many independent operations.
 
 Secret-bearing operations may only use providers inside the same trusted
-machine or a deliberately paired OpenService endpoint.
+machine or a deliberately paired GFOpenService endpoint.
 
 ## 6. Migration
 
 The existing OpenSSL 3 provider and `opentls.key/1` service are retained as
-qualification tools. OpenBrowser first gains an OpenTLS backend alongside
+qualification tools. GFOpenBrowser first gains a GFOpenTLS backend alongside
 AmiSSL. The old path is removed only after real-site regression and protocol
 test coverage pass.
 
 ## 7. Version 2: what SSH needs (8 October 2026)
 
-OpenPuTTY is the first user. `opencrypto.library` 2.0 adds X25519,
+GFOpenPuTTY is the first user. `gfopencrypto.library` 2.0 adds X25519,
 sntrup761, Ed25519, ECDSA (P-256, P-384, P-521) and RSA verification, the
 SHA-256 and SHA-512 block functions, AES (CTR, CBC, ECB), ChaCha20 and
-Poly1305 (`include/libraries/opencrypto.h`: one request structure per call,
+Poly1305 (`include/libraries/gfopencrypto.h`: one request structure per call,
 in A0, as version 1's calls).
 
 - **Who does the work.** Each heavy operation is a magic function
   (`library/oc_magic.h`): a 12-byte tag in front of a stack-convention
   function, with the ids `$00010200` to `$0001020c` in amigachrome-guest's
-  `ac_magic.h`. On AmigaChrome AC090 runs it as host code
+  `ac_magic.h`. On AmiCradle AC090 runs it as host code
   (amigachrome's `jit_crypto.c`), compiled from this repository's
   `src/` (copied there by its `opencrypto/sync.sh`); everywhere else the
   library runs the same C as 68k code. `OC_Accelerated()` (the probe,
   `$00010200`) says which operations are host code on this machine.
   This puts the 68040 reference and the AC090 leaves of section 2 in
-  place; OpenGPU batches and OpenService stay for later.
+  place; GFOpenGPU batches and GFOpenService stay for later.
 - **Same bytes either way.** Each magic function writes one range (its
   first argument) and nothing else, and the host compiles the very same C,
   so AC090's `AC090_MAGIC=verify` can run both and compare. Randomness is
@@ -106,17 +106,17 @@ in A0, as version 1's calls).
   copies, RFC 8439 ChaCha20 and Poly1305, FIPS 197 for each key size, FIPS
   180 through the block functions, RFC 6979 A.2.5 for P-256, an RSA-2048
   public operation, sntrup761 round trips, implicit rejection and
-  OpenCrypto's own known answer), and random inputs against Python's
+  GFOpenCrypto's own known answer), and random inputs against Python's
   cryptography package (`tests/differential.py`: 200 rounds of each
   symmetric operation and 30 of RSA 2048/3072/4096 and ECDSA on each
   curve, good and altered): no failures.
 - sntrup761 against PuTTY 0.85's own (`tests/interop_putty.sh`), each
   side's key pair with the other side's encapsulation: 100 rounds each way,
-  no failures. In the lab, OpenPuTTY with OpenCrypto completes the
+  no failures. In the lab, GFOpenPuTTY with GFOpenCrypto completes the
   sntrup761x25519-sha512 key exchange with PuTTY's test server.
-- On the Amiga (a scratch copy of AmigaChrome's Instance-11, AC090 68040):
-  `OpenCryptoVectors` passes all 42 checks as 68k code, with the same
-  sntrup761 known answer as the PC; `OpenCryptoBench` checks each library
+- On the Amiga (a scratch copy of AmiCradle's Instance-11, AC090 68040):
+  `GFOpenCryptoVectors` passes all 42 checks as 68k code, with the same
+  sntrup761 known answer as the PC; `GFOpenCryptoBench` checks each library
   call. 68k code on the AC090 JIT: X25519 21 ms, Ed25519 verification
   69 ms, sntrup761 key pair 1.04 s, encapsulation 0.16 s, decapsulation
   0.35 s, AES-256-CTR 250 ms for 16 KB (the constant-time S-box is slow as
@@ -131,13 +131,13 @@ in A0, as version 1's calls).
   `memmove` calls, and the Amiga build passes
   `-fno-tree-loop-distribute-patterns` throughout.
 
-## 9. OpenTLS 1.0: the TLS client on BearSSL (9 October 2026)
+## 9. GFOpenTLS 1.0: the TLS client on BearSSL (9 October 2026)
 
 - **Engine.** BearSSL 0.6 (MIT, `third_party/bearssl`, unchanged;
   `THIRD_PARTY_NOTICES.md`). An earlier branch built on wolfSSL, which is
   GPLv3-or-later: an MIT library cannot ship it, so the user chose BearSSL.
   BearSSL speaks TLS 1.0 to 1.2; TLS 1.3 is our own code behind the same
-  calls (section 10; `docs/AutoDocs-OpenTLS.md`, API version 1, frozen in
+  calls (section 10; `docs/AutoDocs-GFOpenTLS.md`, API version 1, frozen in
   #7).
 - **Layers.** `src/opentls/ot_core.c` is the API over BearSSL's client
   engine; `ot_x509.c` wraps BearSSL's "minimal" X.509 engine (chain,
@@ -148,14 +148,14 @@ in A0, as version 1's calls).
   E-clock's jitter against the scheduler; `ot_platform.c` holds what
   differs between AmigaOS and the POSIX host tests.
 - **Who does the maths.** BearSSL takes each algorithm through a function
-  table. `ot_glue.c` fills the tables from OpenCrypto where
+  table. `ot_glue.c` fills the tables from GFOpenCrypto where
   `OC_Accelerated()` says the x86 or ARM64 cores run the operation: SHA-256,
   SHA-384 and SHA-512 (handshake hashes, the PRF's HMAC and the CBC suites'
   record MACs) through the block functions, AES-CBC and AES-CTR (GCM's
   counter mode), ChaCha20 and Poly1305, X25519 for ECDHE, RSA's public
   operation (certificate and handshake signatures, RSA key exchange) and
   ECDSA verification on P-256, P-384 and P-521. GHASH, SHA-1, MD5 and the
-  NIST-curve ECDHE stay BearSSL's. On a real Amiga, where OpenCrypto has
+  NIST-curve ECDHE stay BearSSL's. On a real Amiga, where GFOpenCrypto has
   nothing accelerated, every table is BearSSL's own constant-time 68k code
   (i31/m31; i15/m15 and the 32-bit GHASH and Poly1305 for the 68060
   build, which has no 64-bit multiply). `OTCF_NO_OFFLOAD` forces that
@@ -174,18 +174,18 @@ in A0, as version 1's calls).
   2026; `tests/lab/lab_amiga.sh`, 10 handshakes each, against
   `openssl s_server` on this machine's loopback; the chain is a P-256 leaf,
   a P-384 intermediate and an RSA-2048 root): full handshake with X25519,
-  19 ms with OpenCrypto against 330 ms as plain 68k code (BearSSL's own,
+  19 ms with GFOpenCrypto against 330 ms as plain 68k code (BearSSL's own,
   `OTCF_NO_OFFLOAD`); the same server letting OpenSSL choose P-256 for the
-  key exchange, 50 ms against 355 ms (P-256 ECDH stays 68k code: OpenCrypto
+  key exchange, 50 ms against 355 ms (P-256 ECDH stays 68k code: GFOpenCrypto
   has no P-256 scalar multiplication yet); an RSA-2048 server (ECDHE on
   P-256), 41 ms against 78 ms; a resumed handshake 1 to 5 ms. One
-  opencrypto.library call costs about 1.5 microseconds on AC090. The GCC
+  gfopencrypto.library call costs about 1.5 microseconds on AC090. The GCC
   6.5 build measures the same within the noise. With a real CA bundle
   (121 certificates, 182 KB) the library's first handshake takes about
   170 ms more, once: the store is read and kept for every program after.
   1 MB downloads (HTTPS and
   three FTPS data connections) arrive whole and checked.
-- **Tests** (`ctest`): `test_opentls_units` checks every OpenCrypto table
+- **Tests** (`ctest`): `test_opentls_units` checks every GFOpenCrypto table
   against BearSSL's own on random inputs; `tests/test_tls_local.py` runs
   `opentls_client` against `openssl s_server` and `opentls_ftps_get`
   against `tests/ftps_server.py` (which refuses a data connection that
@@ -194,7 +194,7 @@ in A0, as version 1's calls).
   only. `tests/lab/lab_amiga.sh` runs the same programs on the Amiga in a
   lab.
 
-## 10. OpenTLS 1.3: TLS 1.3 (20 October 2026)
+## 10. GFOpenTLS 1.3: TLS 1.3 (20 October 2026)
 
 TLS 1.3 saves one round trip on every full handshake, which is what the
 browser on a 68040 notices most. BearSSL 0.6 has no TLS 1.3, so the client
@@ -206,7 +206,7 @@ over the primitives the TLS 1.2 path already uses.
   `ot_tls13_keys.c` the key schedule (HKDF over BearSSL's HMAC) and the
   record protection: AES-GCM put together from the connection's AES-CTR
   and GHASH tables, ChaCha20-Poly1305 from its ChaCha20 and Poly1305
-  tables, so `ot_glue.c` picks OpenCrypto or BearSSL's 68k code exactly as
+  tables, so `ot_glue.c` picks GFOpenCrypto or BearSSL's 68k code exactly as
   for TLS 1.2; `ot_tls13_bridge.c` the hand-over to BearSSL.
 - **What it does.** X25519 key share in the first ClientHello; P-256 only
   after a HelloRetryRequest (a P-256 share costs a scalar multiplication
@@ -214,7 +214,7 @@ over the primitives the TLS 1.2 path already uses.
   nearly all do); cookies. The three TLS 1.3 suites, ChaCha20 first (no
   AES hardware on a 68040). CertificateVerify with ECDSA (P-256, P-384,
   P-521), RSA-PSS (rsa_pss_rsae_sha256/384/512; RSASSA-PSS is new in
-  OpenCrypto 2.1, `src/opencrypto_pss.c`, built into opentls.library too)
+  GFOpenCrypto 2.1, `src/opencrypto_pss.c`, built into gfopentls.library too)
   and Ed25519. The chain and the host name go through the same X.509
   wrapper and trust store as TLS 1.2. ALPN, SNI, tickets with PSK-DHE,
   KeyUpdate both ways (ours after 2^23 records), the middlebox
@@ -271,7 +271,7 @@ over the primitives the TLS 1.2 path already uses.
   new `OT_SetVersion()` and `OT_SessionHasTicket()` (revision 3, at the
   end of the table) set one connection's range and say whether a session
   can resume.
-- **Size.** opentls.library (GCC 16, 68040) grows from 150540 to 189624
+- **Size.** gfopentls.library (GCC 16, 68040) grows from 150540 to 189624
   bytes (+39084): the TLS 1.3 client about 22 KB, the key schedule and
   records 3 KB, the bridge 2 KB, the Ed25519 leaf checks 4 KB, RSA-PSS
   1 KB. No more of BearSSL is linked than before.

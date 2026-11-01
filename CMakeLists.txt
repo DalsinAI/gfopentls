@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(OpenTLS C)
+project(GFOpenTLS C)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -35,7 +35,7 @@ if(Python3_FOUND)
     endif()
 endif()
 
-# ---- OpenTLS on BearSSL (third_party/bearssl, MIT), for the host tests ----
+# ---- GFOpenTLS on BearSSL (third_party/bearssl, MIT), for the host tests ----
 file(GLOB BEARSSL_SRC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bearssl/src/*/*.c
                       ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bearssl/src/*.c)
 add_library(bearssl STATIC ${BEARSSL_SRC})

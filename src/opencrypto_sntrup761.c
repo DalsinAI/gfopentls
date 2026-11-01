@@ -1,4 +1,4 @@
-/* OpenCrypto: Streamlined NTRU Prime sntrup761, the KEM of SSH's
+/* GFOpenCrypto: Streamlined NTRU Prime sntrup761, the KEM of SSH's
  * sntrup761x25519-sha512 key exchange (as OpenSSH and PuTTY have it:
  * NTRU Prime round 3, with the 32-byte confirmation hash on the
  * ciphertext and implicit rejection).
@@ -17,12 +17,12 @@
  *
  * Memory: everything is on the caller's stack (about 24 KB at the
  * deepest, in key generation), so calls from several tasks at once are
- * safe; opencrypto.library runs these on a stack of its own.
+ * safe; gfopencrypto.library runs these on a stack of its own.
  *
  * Randomness: the caller gives a 32-byte seed, expanded with ChaCha20
  * (oc_expand_seed), so the same seed gives the same keys on every machine
  * (AC090's host code and the 68k code give identical bytes). */
-#include "opencrypto/opencrypto.h"
+#include "gfopencrypto/gfopencrypto.h"
 
 #include <string.h>
 

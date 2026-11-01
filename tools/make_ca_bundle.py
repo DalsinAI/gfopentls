@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Makes OpenTLS's CA bundle (S:OpenTLS/ca-bundle.pem) and its licence
+"""Makes GFOpenTLS's CA bundle (S:GFOpenTLS/ca-bundle.pem) and its licence
 note from Mozilla's CA list as a Debian or Ubuntu ca-certificates package
 installs it, and from nothing else.
 
@@ -102,15 +102,15 @@ def main():
                     + "\n".join(b64[i:i + 64] for i in range(0, len(b64), 64))
                     + "\n-----END CERTIFICATE-----\n")
         names.append(ascii_name(f.stem))
-    head = (f"# OpenTLS CA bundle: Mozilla's CA list, {len(files)} certificates.\n"
+    head = (f"# GFOpenTLS CA bundle: Mozilla's CA list, {len(files)} certificates.\n"
             f"# From the {PACKAGE} package {version} ({a.source}/*.crt), made {today}\n"
             f"# by openamigatls tools/make_ca_bundle.py.\n"
             "# Under the Mozilla Public License 2.0: ca-bundle.LICENSE says where its\n"
-            "# source is. Add your own CAs in ENVARC:OpenTLS/certs/, not here: an OpenUp\n"
+            "# source is. Add your own CAs in ENVARC:GFOpenTLS/certs/, not here: a GFOpenUp\n"
             "# upgrade replaces this file.\n\n")
     a.outdir.mkdir(parents=True, exist_ok=True)
     (a.outdir / "ca-bundle.pem").write_text(head + "\n".join(body), encoding="ascii")
-    note = (f"OpenTLS's CA bundle (ca-bundle.pem)\n"
+    note = (f"GFOpenTLS's CA bundle (ca-bundle.pem)\n"
             f"=====================================\n\n"
             f"ca-bundle.pem holds the {len(files)} certificate authorities of Mozilla's CA list\n"
             f"(the NSS root store, certdata.txt) as the {PACKAGE} package {version}\n"
@@ -120,7 +120,7 @@ def main():
             "under the Mozilla Public License, version 2.0, whose text follows. Its source\n"
             "is certdata.txt in Mozilla's NSS (https://hg.mozilla.org/projects/nss/), and\n"
             f"the {PACKAGE} source package {version} carries the copy this was made from.\n"
-            "opentls.library itself is MIT licensed and free; this file is separate from it.\n\n"
+            "gfopentls.library itself is MIT licensed and free; this file is separate from it.\n\n"
             "Certificates:\n" + "".join(f"  {n}\n" for n in names) + "\n"
             + a.mpl.read_text())
     (a.outdir / "ca-bundle.LICENSE").write_text(note, encoding="ascii")

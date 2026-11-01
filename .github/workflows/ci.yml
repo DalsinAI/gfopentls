@@ -1,4 +1,4 @@
-name: OpenTLS CI
+name: GFOpenTLS CI
 
 on:
   push:

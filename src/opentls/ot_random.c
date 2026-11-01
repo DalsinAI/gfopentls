@@ -1,4 +1,4 @@
-/* OpenTLS: the random generator. HMAC-DRBG (SHA-256, BearSSL's), seeded
+/* GFOpenTLS: the random generator. HMAC-DRBG (SHA-256, BearSSL's), seeded
  * from the platform: on AmigaOS from the jitter between the E-clock and
  * the scheduler, sampled many times and hashed; in the host tests from
  * /dev/urandom. Fresh samples are mixed in at every call.

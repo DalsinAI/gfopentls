@@ -1,5 +1,5 @@
-/* OpenTLS: certificate checks. BearSSL's "minimal" X.509 engine does the
- * chain, the dates and DNS names; this wrapper around it adds what OpenTLS
+/* GFOpenTLS: certificate checks. BearSSL's "minimal" X.509 engine does the
+ * chain, the dates and DNS names; this wrapper around it adds what GFOpenTLS
  * promises on top: the server's certificate and its SHA-256 fingerprint
  * kept for the caller, pinned certificates, the verify modes, and
  * certificates for IP addresses (which the minimal engine does not match),

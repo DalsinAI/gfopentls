@@ -149,8 +149,8 @@ int oc_emsa_pss_verify(const uint8_t *em, size_t em_length, size_t mod_bits,
                        const uint8_t *mhash, size_t hash_length, long salt_length,
                        oc_hash_fn hash);
 
-/* What opencrypto.library's OC_Accelerated() answers: the operations this
- * machine runs as host code (AmigaChrome's AC090); 0 on a real Amiga. */
+/* What gfopencrypto.library's OC_Accelerated() answers: the operations this
+ * machine runs as host code (AmiCradle's AC090); 0 on a real Amiga. */
 #define OCF_X25519    (1u << 0)
 #define OCF_ED25519   (1u << 1)
 #define OCF_SNTRUP761 (1u << 2)

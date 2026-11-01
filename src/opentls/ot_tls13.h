@@ -1,4 +1,4 @@
-/* OpenTLS: the TLS 1.3 client (RFC 8446), our own code on OpenCrypto's
+/* GFOpenTLS: the TLS 1.3 client (RFC 8446), our own code on GFOpenCrypto's
  * and BearSSL's primitives. ot_tls13_keys.c is the key schedule and the
  * record protection, ot_tls13.c the handshake, the records and what
  * follows the handshake, ot_tls13_bridge.c the hand-over to BearSSL when
@@ -9,7 +9,7 @@
 
 #include "ot_internal.h"
 #include "inner.h"      /* BearSSL's record types, br_ssl_engine_fail() */
-#include <opencrypto/opencrypto.h>
+#include <gfopencrypto/gfopencrypto.h>
 
 #define OT13_HASH_MAX    48         /* SHA-384 */
 #define OT13_RECORD_MAX  16384      /* plaintext */
@@ -63,7 +63,7 @@ struct ot13_keys {
     union {
         const br_block_ctr_class *vtable;
         br_aes_gen_ctr_keys bear;
-        unsigned char any[256];      /* OpenCrypto's (ot_glue.c) is smaller */
+        unsigned char any[256];      /* GFOpenCrypto's (ot_glue.c) is smaller */
     } ctr;
 };
 /* the traffic keys of secret; 0, or -1 when the AES table cannot fit */

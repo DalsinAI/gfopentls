@@ -1,4 +1,4 @@
-/* OpenTLS internals: the connection, context and session structures, and
+/* GFOpenTLS internals: the connection, context and session structures, and
  * what the platform layer (ot_platform.c) gives the rest.
  * MIT licensed and free. Copyright (c) 2026 AmigaChrome Team. */
 #ifndef OT_INTERNAL_H
@@ -11,12 +11,12 @@
 #include <exec/types.h>
 #include <exec/libraries.h>
 #include <utility/hooks.h>
-#include <libraries/opentls.h>
+#include <libraries/gfopentls.h>
 
 #include "bearssl.h"
 
 #define OT_LIB_VERSION   1
-#define OT_LIB_REVISION  3          /* 1.1: OT_GetPeerName; 1.2: S:OpenTLS/ca-bundle.pem, ENVARC:OpenTLS/certs/;
+#define OT_LIB_REVISION  3          /* 1.1: OT_GetPeerName; 1.2: S:GFOpenTLS/ca-bundle.pem, ENVARC:GFOpenTLS/certs/;
                                        1.3: TLS 1.3, OT_SetVersion, OT_SessionHasTicket */
 
 #define OT_HOST_MAX      255
@@ -69,7 +69,7 @@ int ot_random_init(void);
 void ot_random_cleanup(void);
 LONG ot_random(void *buf, size_t len);
 
-/* ---- OpenCrypto glue (ot_glue.c) ---- */
+/* ---- GFOpenCrypto glue (ot_glue.c) ---- */
 ULONG ot_glue_accelerated(void);        /* OTACC_* */
 void ot_glue_cleanup(void);             /* library expunge */
 struct ot_impls {
@@ -85,7 +85,7 @@ struct ot_impls {
     br_chacha20_run chacha20;
     br_poly1305_run poly1305;
 };
-/* the implementations a connection uses: OpenCrypto's where it is
+/* the implementations a connection uses: GFOpenCrypto's where it is
  * accelerated (or everywhere, in the host tests), BearSSL's otherwise */
 void ot_glue_select(struct ot_impls *impls, int offload);
 /* Ed25519 (TLS 1.3 certificates): whether there is one, and the check (1 valid) */

@@ -1,4 +1,4 @@
-/* OpenTLS: the TLS 1.3 client, written from RFC 8446.
+/* GFOpenTLS: the TLS 1.3 client, written from RFC 8446.
  *
  * One ClientHello offers TLS 1.3 and, when the caller's range allows, TLS
  * 1.0 to 1.2 as well. If the server answers with TLS 1.3, this file does
@@ -21,7 +21,7 @@
  *
  * MIT licensed and free. Copyright (c) 2026 The AmigaChrome Team. */
 #include "ot_tls13.h"
-#include <clib/opentls_protos.h>
+#include <clib/gfopentls_protos.h>
 
 #define HS_CLIENT_HELLO       1
 #define HS_SERVER_HELLO       2
@@ -839,7 +839,7 @@ static LONG server_hello(struct OTConnection *c, const unsigned char *msg, size_
         return abort13(c, ALERT_ILLEGAL_PARAMETER, OTERR_PROTOCOL, "a session ID that is not ours");
     if (!offered_suite(suite) || (t->hrr && suite != t->hrr_suite))
         return abort13(c, ALERT_ILLEGAL_PARAMETER, OTERR_CIPHER,
-                       "The server chose a cipher suite OpenTLS did not offer.");
+                       "The server chose a cipher suite GFOpenTLS did not offer.");
     if (rest_len)
         return abort13(c, ALERT_UNEXPECTED_MESSAGE, OTERR_PROTOCOL, "a message after the ServerHello");
 
@@ -849,7 +849,7 @@ static LONG server_hello(struct OTConnection *c, const unsigned char *msg, size_
         if (t->hrr) return abort13(c, ALERT_UNEXPECTED_MESSAGE, OTERR_PROTOCOL, "a second HelloRetryRequest");
         if (have_share && ((group != GROUP_X25519 && group != GROUP_P256) || group == t->group))
             return abort13(c, ALERT_ILLEGAL_PARAMETER, OTERR_CIPHER,
-                           "The server asked for a key exchange group OpenTLS did not offer.");
+                           "The server asked for a key exchange group GFOpenTLS did not offer.");
         if (!have_share && !cookie)
             return abort13(c, ALERT_ILLEGAL_PARAMETER, OTERR_PROTOCOL, "a HelloRetryRequest that changes nothing");
         t->hrr = 1;
@@ -1022,7 +1022,7 @@ static LONG certificate_verify(struct OTConnection *c, struct rd *r, const unsig
         if (sigalgs[i] == scheme && (scheme != 0x0807 || t->sigalgs_ed25519)) offered = 1;
     if (!offered)
         return abort13(c, ALERT_ILLEGAL_PARAMETER, OTERR_CIPHER,
-                       "The server signed with a scheme OpenTLS did not offer.");
+                       "The server signed with a scheme GFOpenTLS did not offer.");
     err = ot13_verify_cv(&c->impls, scheme,
                          c->x509.leaf_ed25519 ? NULL : (*xc)->get_pkey(xc, NULL),
                          c->x509.leaf_ed25519 ? c->x509.ed25519 : NULL,

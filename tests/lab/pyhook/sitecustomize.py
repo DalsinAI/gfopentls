@@ -1,5 +1,5 @@
-"""OpenTLS's Amiga lab only (tests/lab/lab_amiga.sh): gives the lab's
-Amiga a way to the test servers on this machine's loopback. OpenSocket
+"""GFOpenTLS's Amiga lab only (tests/lab/lab_amiga.sh): gives the lab's
+Amiga a way to the test servers on this machine's loopback. GFOpenSocket
 lets the guest's 127.0.0.1 reach the instance's own listeners only; this
 adds entries to that table for the ports in OPENTLS_LAB_PORTS
 ("29443-29459" or "guest:host,..."), each to the same port on 127.0.0.1.

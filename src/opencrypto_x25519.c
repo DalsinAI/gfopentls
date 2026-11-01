@@ -1,9 +1,9 @@
-/* OpenCrypto: X25519 (RFC 7748), constant time.
+/* GFOpenCrypto: X25519 (RFC 7748), constant time.
  * Copyright (c) 2026 AmigaChrome Team. MIT.
  *
  * The Montgomery ladder over the u coordinate, 255 steps whatever the
  * scalar, with conditional swaps by mask (no branch on a secret bit). */
-#include "opencrypto/opencrypto.h"
+#include "gfopencrypto/gfopencrypto.h"
 #include "oc_fe25519.h"
 
 static const oc_gf gf_121665 = { 0xDB41, 1 };

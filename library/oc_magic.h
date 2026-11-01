@@ -1,10 +1,10 @@
-/* OpenCrypto's magic functions: each heavy operation is a function of
- * ours that AC090 (AmigaChrome's 68k core) runs as host code, and that
+/* GFOpenCrypto's magic functions: each heavy operation is a function of
+ * ours that AC090 (AmiCradle's 68k core) runs as host code, and that
  * runs as its own 68k code everywhere else (a real Amiga, a PiStorm,
  * another emulator).
  * Copyright (c) 2026 AmigaChrome Team. MIT.
  *
- * The tag is AmigaChrome's published one (amigachrome-guest
+ * The tag is AmiCradle's published one (amigachrome-guest
  * common/amiga/ac_magic.h, version 1): the function's entry is
  *     BRA.S *+12; DC.L 'ACMF'; DC.W $0001; DC.L id; JMP body
  * and the ids below are in ac_magic.h's list and in AC090's table

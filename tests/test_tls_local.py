@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""OpenTLS against local servers only (no internet): openssl s_server for
+"""GFOpenTLS against local servers only (no internet): openssl s_server for
 TLS, tests/ftps_server.py for FTPS. Makes its own test PKI with the openssl
 command (a root CA, an intermediate, leaves good, wrong-named, expired,
 self-signed and Ed25519) in OPENTLS_TEST_DIR (default ./tls-local), then
-runs each case with OpenCrypto doing the maths and again with
-OTCF_NO_OFFLOAD. TLS 1.3 is what s_server and OpenTLS agree on unless a
+runs each case with GFOpenCrypto doing the maths and again with
+OTCF_NO_OFFLOAD. TLS 1.3 is what s_server and GFOpenTLS agree on unless a
 case says otherwise; the TLS 1.2 cases give s_server -no_tls1_3, so they
 go through the hand-over to BearSSL (ot_tls13_bridge.c).
 
@@ -47,11 +47,11 @@ def make_pki():
     leaf_ext("wrong.ext", "DNS:wrong.example")
     # root: RSA 2048, self-signed
     sh("openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "root.key", "-out", "root.pem",
-       "-days", "3650", "-subj", "/CN=OpenTLS Test Root", "-addext", "basicConstraints=critical,CA:TRUE",
+       "-days", "3650", "-subj", "/CN=GFOpenTLS Test Root", "-addext", "basicConstraints=critical,CA:TRUE",
        "-addext", "keyUsage=critical,keyCertSign,cRLSign")
     # intermediate: ECDSA P-384, signed by the root
     sh("openssl", "req", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-384", "-nodes", "-keyout", "inter.key",
-       "-out", "inter.csr", "-subj", "/CN=OpenTLS Test Intermediate")
+       "-out", "inter.csr", "-subj", "/CN=GFOpenTLS Test Intermediate")
     sh("openssl", "x509", "-req", "-in", "inter.csr", "-CA", "root.pem", "-CAkey", "root.key", "-CAcreateserial",
        "-out", "inter.pem", "-days", "3650", "-sha256", "-extfile", "ca.ext")
 
@@ -186,7 +186,7 @@ def main():
 
     case("TLS 1.2, ECDSA chain (P-256 leaf, P-384 intermediate, RSA root)", Server("ecleaf", NO13),
          CA + get + ["--expect", "TLSv1.2"], {"result": "ok", "conn0.protocol": "0303"})
-    case("TLS 1.2 only in OpenTLS (BearSSL alone)", Server("ecleaf"),
+    case("TLS 1.2 only in GFOpenTLS (BearSSL alone)", Server("ecleaf"),
          CA + get + ["--max", "12", "--expect", "TLSv1.2"], {"result": "ok", "conn0.protocol": "0303"})
     case("session resumption by session ID (3 connections)", Server("ecleaf", NO13),
          CA + ["--connections", "3"], {"result": "ok", "conn0.resumed": "0", "conn1.resumed": "1",
@@ -293,7 +293,7 @@ def main():
     case("an IP address not in the certificate", Server("nameonly"), CA,
          {"result": "fail", "conn0.error": "-11"}, host="127.0.0.1")
     case("TLS 1.3-only server", Server("ecleaf", ["-tls1_3"]), CA, {"result": "ok", "conn0.protocol": "0304"})
-    case("TLS 1.3-only server, OpenTLS at TLS 1.2 at most", Server("ecleaf", ["-tls1_3"]), CA + ["--max", "12"],
+    case("TLS 1.3-only server, GFOpenTLS at TLS 1.2 at most", Server("ecleaf", ["-tls1_3"]), CA + ["--max", "12"],
          {"result": "fail", "conn0.error": "-7"})
     case("TLS 1.3 minimum", Server("ecleaf"), CA + ["--min", "13"], {"result": "ok", "conn0.protocol": "0304"})
     case("TLS 1.3 minimum, TLS 1.2 server", Server("ecleaf", NO13), CA + ["--min", "13"],
@@ -305,7 +305,7 @@ def main():
     case("small buffers", Server("ecleaf"), CA + get + ["--small"], {"result": "ok"})
     case("1 MB download", Server("ecleaf", www="-WWW"), CA + ["--send", "GET /big.bin HTTP/1.0\\r\\n\\r\\n"],
          {"result": "ok", "conn0.received": str((1 << 20) + len(WWW_HEADER))})
-    # the system trust store: OPENTLS_ROOT stands in for S:OpenTLS and ENVARC:OpenTLS
+    # the system trust store: OPENTLS_ROOT stands in for S:GFOpenTLS and ENVARC:GFOpenTLS
     root = os.path.join(WORK, "envroot")
     os.makedirs(os.path.join(root, "certs"), exist_ok=True)
     with open(os.path.join(root, "ca-bundle.pem"), "w") as f:
@@ -373,7 +373,7 @@ def main():
 
 def key_update_cases():
     """KeyUpdate: s_server sends one when told on its standard input ("K"
-    asks for ours back, "k" does not), and OpenTLS sends its own after
+    asks for ours back, "k" does not), and GFOpenTLS sends its own after
     OPENTLS_TEST_KEYUPDATE records (in the field, 2^23)."""
     for offload in (True, False):
         sfx = "" if offload else " (no offload)"
@@ -450,7 +450,7 @@ def key_update_cases():
             good = False
         srv.wait(timeout=10)
         got = sum(b"<<< TLS 1.3, Handshake" in l and b"KeyUpdate" in l for l in lines)
-        label = "TLS 1.3 KeyUpdate from OpenTLS (1 MB upload, a new key every 3 records)" + sfx
+        label = "TLS 1.3 KeyUpdate from GFOpenTLS (1 MB upload, a new key every 3 records)" + sfx
         if good and "result=ok" in out and "conn0.uploaded=%d" % (1 << 20) in out and got >= 20:
             print("ok   %s" % label)
         else:
