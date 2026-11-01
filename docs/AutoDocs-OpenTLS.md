@@ -88,7 +88,9 @@ Unless `OTCF_NO_SYSTEM_TRUST` is set, a context trusts:
 
 plus `CAFile` from the config and whatever `OT_AddTrustFile()` and
 `OT_AddTrustPEM()` add. The time used for certificate dates is the Amiga's
-clock: a clock set to 1978 makes every certificate `OTERR_EXPIRED`.
+clock, taken as local time and turned into UTC with Locale prefs' time zone
+(locale.library's `loc_GMTOffset`; as UTC without locale.library): a clock
+set to 1978 makes every certificate `OTERR_EXPIRED`.
 
 ---
 
