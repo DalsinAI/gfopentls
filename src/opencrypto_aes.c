@@ -1,6 +1,6 @@
 /* GFOpenCrypto: AES-128, -192 and -256 (FIPS 197) in CTR (SSH's SDCTR), CBC
  * and ECB, constant time.
- * Copyright (c) 2026 AmigaChrome Team. MIT.
+ * Copyright (c) 2026 AmiCradle Team. MIT.
  *
  * The S-box is read without a secret index: every lookup reads all 256
  * entries and keeps the one it wants by mask, sixteen state bytes in one

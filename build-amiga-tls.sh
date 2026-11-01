@@ -17,7 +17,7 @@
 #               set (the GCC 16 -m68040 FPCR clash; the build uses no FPU)
 # Outputs: lib/gfopentls.library, tests/GFOpenTLSClient, tests/GFOpenTLSFTPSGet,
 # and the headers under include/.
-# MIT licensed and free. Copyright (c) 2026 AmigaChrome Team.
+# MIT licensed and free. Copyright (c) 2026 AmiCradle Team.
 set -eu
 
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)

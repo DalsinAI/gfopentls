@@ -1,6 +1,6 @@
 /* GFOpenCrypto: arithmetic in GF(2^255 - 19), shared by X25519 and Ed25519.
  * Internal to GFOpenCrypto (each user includes it once).
- * Copyright (c) 2026 AmigaChrome Team. MIT.
+ * Copyright (c) 2026 AmiCradle Team. MIT.
  *
  * Sixteen limbs of 16 bits, signed, as TweetNaCl lays them out, kept in
  * 32-bit ints between operations; a product is summed in 64 bits. Every

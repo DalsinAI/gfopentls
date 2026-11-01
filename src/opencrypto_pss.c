@@ -8,7 +8,7 @@
  * GFOpenCrypto. oc_rsa_pss_verify() (opencrypto_pubkey.c) puts it together
  * with RSA's public operation and GFOpenCrypto's SHA-2.
  *
- * MIT licensed and free. Copyright (c) 2026 The AmigaChrome Team. */
+ * MIT licensed and free. Copyright (c) 2026 The AmiCradle Team. */
 #include "gfopencrypto/gfopencrypto.h"
 
 #include <string.h>

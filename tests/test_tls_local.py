@@ -10,7 +10,7 @@ go through the hand-over to BearSSL (ot_tls13_bridge.c).
 
   test_tls_local.py opentls_client opentls_ftps_get
 
-MIT licensed and free. Copyright (c) 2026 AmigaChrome Team."""
+MIT licensed and free. Copyright (c) 2026 AmiCradle Team."""
 import os
 import socket
 import subprocess

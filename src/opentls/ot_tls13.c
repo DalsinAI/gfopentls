@@ -19,7 +19,7 @@
  * BearSSL is not used again, so its buffer holds the record being read and,
  * when large enough (not OTCF_SMALL_BUFFERS), the records being written.
  *
- * MIT licensed and free. Copyright (c) 2026 The AmigaChrome Team. */
+ * MIT licensed and free. Copyright (c) 2026 The AmiCradle Team. */
 #include "ot_tls13.h"
 #include <clib/gfopentls_protos.h>
 

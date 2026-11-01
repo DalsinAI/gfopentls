@@ -2,7 +2,7 @@
 #define LIBRARIES_OPENTLS_H
 /*
  * gfopentls.library: a TLS client for AmigaOS 3.x.
- * MIT licensed and free. Copyright (c) 2026 AmigaChrome Team.
+ * MIT licensed and free. Copyright (c) 2026 AmiCradle Team.
  *
  * API version 1, frozen 9 October 2026. Later versions only add: new
  * functions at the end of the table, new constants, and new fields at the

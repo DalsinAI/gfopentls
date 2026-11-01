@@ -8,7 +8,7 @@
  * constant-time 68k code. The host tests build these tables over
  * GFOpenCrypto's portable C, so both paths are tested on every run.
  *
- * MIT licensed and free. Copyright (c) 2026 AmigaChrome Team. */
+ * MIT licensed and free. Copyright (c) 2026 AmiCradle Team. */
 #include "ot_internal.h"
 #include "inner.h"      /* BearSSL's br_rsa_pkcs1_sig_unpad() */
 

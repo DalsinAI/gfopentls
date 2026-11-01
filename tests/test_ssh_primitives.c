@@ -17,7 +17,7 @@
  *   RSASSA-PSS    signatures made by Python's cryptography package (SHA-256
  *                 and SHA-384, a 2048- and a 2049-bit key), and altered copies
  *   ECDSA         a P-256 signature from RFC 6979 section A.2.5
- * Copyright (c) 2026 AmigaChrome Team. MIT. */
+ * Copyright (c) 2026 AmiCradle Team. MIT. */
 #include "gfopencrypto/gfopencrypto.h"
 #include "vectors.h"
 

@@ -5,7 +5,7 @@
  * certificates for IP addresses (which the minimal engine does not match),
  * and for TLS 1.3 server certificates with Ed25519 keys (which it cannot
  * read at all; 20 October 2026).
- * MIT licensed and free. Copyright (c) 2026 AmigaChrome Team. */
+ * MIT licensed and free. Copyright (c) 2026 AmiCradle Team. */
 #include "ot_internal.h"
 
 #define INNER(x) (&(x)->minimal.vtable)

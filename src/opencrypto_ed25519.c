@@ -1,5 +1,5 @@
 /* GFOpenCrypto: Ed25519 signature verification (RFC 8032, section 5.1.7).
- * Copyright (c) 2026 AmigaChrome Team. MIT.
+ * Copyright (c) 2026 AmiCradle Team. MIT.
  *
  * Verification handles only public values (a host key, a signature, the
  * signed data), so it need not run in constant time. The check is the

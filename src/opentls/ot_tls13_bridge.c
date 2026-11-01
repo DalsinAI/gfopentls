@@ -24,7 +24,7 @@
  * When the server's ChangeCipherSpec has gone in, everything after is
  * encrypted and goes to BearSSL as it comes: the bridge ends.
  *
- * MIT licensed and free. Copyright (c) 2026 The AmigaChrome Team. */
+ * MIT licensed and free. Copyright (c) 2026 The AmiCradle Team. */
 #include "ot_tls13.h"
 
 struct ot13_bridge {

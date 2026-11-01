@@ -1,7 +1,7 @@
 /* GFOpenTLS: the calls of gfopentls.library (docs/AutoDocs-GFOpenTLS.md), over
  * BearSSL's client engine. The library (library/opentls_lib.c) calls these
  * from its register entry points; the host tests call them directly.
- * MIT licensed and free. Copyright (c) 2026 AmigaChrome Team. */
+ * MIT licensed and free. Copyright (c) 2026 AmiCradle Team. */
 #include "ot_internal.h"
 #include "ot_tls13.h"
 #include "inner.h"      /* BearSSL's br_ssl_engine_fail() */

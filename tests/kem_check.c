@@ -1,6 +1,6 @@
 /* sntrup761 through its public calls only (the file compiled on its own),
  * hashes printed for comparing machines.
- * Copyright (c) 2026 AmigaChrome Team. MIT. */
+ * Copyright (c) 2026 AmiCradle Team. MIT. */
 #include <stdio.h>
 #include <string.h>
 #include "gfopencrypto/gfopencrypto.h"
