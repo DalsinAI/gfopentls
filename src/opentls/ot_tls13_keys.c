@@ -5,7 +5,7 @@
  * Poly1305 ones (ot_glue.c chooses: GFOpenCrypto's where AC090 runs them as
  * host code, BearSSL's constant-time 68k code otherwise).
  * tests/test_tls13_vectors.c checks all of it against RFC 8448.
- * MIT licensed and free. Copyright (c) 2026 The AmigaChrome Team. */
+ * MIT licensed and free. Copyright (c) 2026 The AmiCradle Team. */
 #include "ot_tls13.h"
 
 static const struct ot13_suite suites[] = {

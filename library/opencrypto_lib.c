@@ -1,5 +1,5 @@
 /* gfopencrypto.library 2.1
- * Copyright (c) 2026 AmigaChrome Team. MIT.
+ * Copyright (c) 2026 AmiCradle Team. MIT.
  *
  * Version 2 (8 Oct 2026) adds what SSH needs: X25519, sntrup761, Ed25519,
  * RSA and ECDSA verification, SHA-2 block runs, ChaCha20, Poly1305 and
@@ -33,11 +33,11 @@ int start(void) { return -1; }
 
 static const char lib_name[] = OPENCRYPTOLIB_NAME;
 static const char lib_id[] =
-    "gfopencrypto.library 2.1 (20.10.2026) GFOpenCrypto, AmigaChrome Team\r\n";
+    "gfopencrypto.library 2.1 (20.10.2026) GFOpenCrypto, AmiCradle Team\r\n";
 /* For Version FILE and the Installer: without it, Version only finds the
  * library's version once it is in memory. */
 static const char lib_ver[] __attribute__((used)) =
-    "$VER: gfopencrypto.library 2.1 (20.10.2026) GFOpenCrypto, AmigaChrome Team";
+    "$VER: gfopencrypto.library 2.1 (20.10.2026) GFOpenCrypto, AmiCradle Team";
 
 static struct Library *lib_init(REG(d0, struct OpenCryptoLibBase *base),
                                 REG(a0, BPTR seglist),

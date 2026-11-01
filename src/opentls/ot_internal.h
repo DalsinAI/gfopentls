@@ -1,6 +1,6 @@
 /* GFOpenTLS internals: the connection, context and session structures, and
  * what the platform layer (ot_platform.c) gives the rest.
- * MIT licensed and free. Copyright (c) 2026 AmigaChrome Team. */
+ * MIT licensed and free. Copyright (c) 2026 AmiCradle Team. */
 #ifndef OT_INTERNAL_H
 #define OT_INTERNAL_H
 

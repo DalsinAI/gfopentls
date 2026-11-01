@@ -3,7 +3,7 @@
  * record protection, ot_tls13.c the handshake, the records and what
  * follows the handshake, ot_tls13_bridge.c the hand-over to BearSSL when
  * the server answers with TLS 1.2. DESIGN.md section 10 says how they fit.
- * MIT licensed and free. Copyright (c) 2026 The AmigaChrome Team. */
+ * MIT licensed and free. Copyright (c) 2026 The AmiCradle Team. */
 #ifndef OT_TLS13_H
 #define OT_TLS13_H
 

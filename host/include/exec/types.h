@@ -1,5 +1,5 @@
 /* Host build of GFOpenTLS: the few AmigaOS types its headers use.
- * MIT, Copyright (c) 2026 AmigaChrome Team. */
+ * MIT, Copyright (c) 2026 AmiCradle Team. */
 #ifndef EXEC_TYPES_H
 #define EXEC_TYPES_H
 #include <stdint.h>

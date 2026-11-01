@@ -30,7 +30,7 @@
  *     --converse       answer each PING read with PONG (KeyUpdate tests)
  * Prints key=value lines; exit code 0 when all went as asked.
  *
- * MIT licensed and free. Copyright (c) 2026 AmigaChrome Team. */
+ * MIT licensed and free. Copyright (c) 2026 AmiCradle Team. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

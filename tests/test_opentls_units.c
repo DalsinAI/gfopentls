@@ -1,7 +1,7 @@
 /* GFOpenTLS unit tests: every function table GFOpenCrypto fills in for BearSSL
  * (ot_glue.c) against BearSSL's own, on random inputs; and the address
  * parser, the session rules and the error names.
- * MIT licensed and free. Copyright (c) 2026 AmigaChrome Team. */
+ * MIT licensed and free. Copyright (c) 2026 AmiCradle Team. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

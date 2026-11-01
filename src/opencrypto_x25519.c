@@ -1,5 +1,5 @@
 /* GFOpenCrypto: X25519 (RFC 7748), constant time.
- * Copyright (c) 2026 AmigaChrome Team. MIT.
+ * Copyright (c) 2026 AmiCradle Team. MIT.
  *
  * The Montgomery ladder over the u coordinate, 255 steps whatever the
  * scalar, with conditional swaps by mask (no branch on a secret bit). */

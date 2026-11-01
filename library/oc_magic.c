@@ -1,6 +1,6 @@
 /* GFOpenCrypto's magic functions (oc_magic.h): the tags, and the 68k bodies,
  * which call the same C the host runs. Built with -fno-lto.
- * Copyright (c) 2026 AmigaChrome Team. MIT. */
+ * Copyright (c) 2026 AmiCradle Team. MIT. */
 #include <string.h>
 
 #include "gfopencrypto/gfopencrypto.h"

@@ -2,7 +2,7 @@
  * checks GFOpenCrypto against Python's cryptography package (OpenSSL) on
  * random inputs. Each line: an operation and its arguments in hex ("-" is
  * empty); the answer: hex, or 0/1.
- * Copyright (c) 2026 AmigaChrome Team. MIT. */
+ * Copyright (c) 2026 AmiCradle Team. MIT. */
 #include "gfopencrypto/gfopencrypto.h"
 
 #include <stdio.h>

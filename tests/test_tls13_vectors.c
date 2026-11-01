@@ -3,7 +3,7 @@
  * traces of RFC 8448 (tests/rfc8448.h), with both function tables
  * (GFOpenCrypto's and BearSSL's); and records sealed with one table and
  * opened with the other, for the suites RFC 8448 does not show.
- * MIT licensed and free. Copyright (c) 2026 The AmigaChrome Team. */
+ * MIT licensed and free. Copyright (c) 2026 The AmiCradle Team. */
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>

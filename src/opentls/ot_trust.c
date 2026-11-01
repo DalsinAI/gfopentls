@@ -1,7 +1,7 @@
 /* GFOpenTLS: trust anchors from PEM certificates, and the system trust store
  * (S:GFOpenTLS/ca-bundle.pem and ENVARC:GFOpenTLS/certs/, docs/AutoDocs-GFOpenTLS.md),
  * loaded once and shared by every context.
- * MIT licensed and free. Copyright (c) 2026 AmigaChrome Team. */
+ * MIT licensed and free. Copyright (c) 2026 AmiCradle Team. */
 #include "ot_internal.h"
 
 struct growbuf {

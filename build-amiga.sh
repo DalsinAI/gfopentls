@@ -9,7 +9,7 @@
 # Outputs: lib/gfopencrypto.library, tests/GFOpenCryptoLibTest (version 1's
 # calls), tests/GFOpenCryptoVectors (the published vectors, as on the PC),
 # tests/GFOpenCryptoBench (version 2's calls, checked and timed).
-# MIT, Copyright (c) 2026 AmigaChrome Team.
+# MIT, Copyright (c) 2026 AmiCradle Team.
 set -eu
 
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)

@@ -1,5 +1,5 @@
 /* Host build of GFOpenTLS: struct Hook, entered as a C function
- * h_Entry(hook, object, message). MIT, Copyright (c) 2026 AmigaChrome Team. */
+ * h_Entry(hook, object, message). MIT, Copyright (c) 2026 AmiCradle Team. */
 #ifndef UTILITY_HOOKS_H
 #define UTILITY_HOOKS_H
 #include <exec/types.h>
