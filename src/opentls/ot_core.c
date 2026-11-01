@@ -1,11 +1,11 @@
-/* OpenTLS: the calls of opentls.library (docs/AutoDocs-OpenTLS.md), over
+/* GFOpenTLS: the calls of gfopentls.library (docs/AutoDocs-GFOpenTLS.md), over
  * BearSSL's client engine. The library (library/opentls_lib.c) calls these
  * from its register entry points; the host tests call them directly.
  * MIT licensed and free. Copyright (c) 2026 AmigaChrome Team. */
 #include "ot_internal.h"
 #include "ot_tls13.h"
 #include "inner.h"      /* BearSSL's br_ssl_engine_fail() */
-#include <clib/opentls_protos.h>
+#include <clib/gfopentls_protos.h>
 
 /* ---- small helpers (no stdio in the library) ---- */
 
@@ -242,7 +242,7 @@ LONG ot_engine_error(struct OTConnection *c, int err)
     c->state = OTS_FAILED;
     if (err >= BR_ERR_SEND_FATAL_ALERT) {
         fmt_long(num, err - BR_ERR_SEND_FATAL_ALERT);
-        ot_set_error(c, OTERR_PROTOCOL, err, "OpenTLS ended the connection (alert ", num, ").");
+        ot_set_error(c, OTERR_PROTOCOL, err, "GFOpenTLS ended the connection (alert ", num, ").");
     } else if (err >= BR_ERR_RECV_FATAL_ALERT) {
         int alert = err - BR_ERR_RECV_FATAL_ALERT;
         fmt_long(num, alert);
@@ -262,7 +262,7 @@ LONG ot_engine_error(struct OTConnection *c, int err)
     } else if (err == BR_ERR_X509_NOT_TRUSTED) {
         if (!c->ctx->merged_count)
             ot_set_error(c, OTERR_TRUSTSTORE, err,
-                "No trusted certificates: install the CA bundle as S:OpenTLS/ca-bundle.pem.", NULL, NULL);
+                "No trusted certificates: install the CA bundle as S:GFOpenTLS/ca-bundle.pem.", NULL, NULL);
         else
             cert_error(c, OTERR_UNTRUSTED, err);
     } else if (err == OT_X509_PINNED) {
@@ -270,9 +270,9 @@ LONG ot_engine_error(struct OTConnection *c, int err)
     } else if (err >= BR_ERR_X509_OK && err < 64) {
         cert_error(c, OTERR_BADCERT, err);
     } else if (err == BR_ERR_UNSUPPORTED_VERSION || err == BR_ERR_BAD_VERSION) {
-        ot_set_error(c, OTERR_VERSION, err, "The server and OpenTLS have no protocol version in common.", NULL, NULL);
+        ot_set_error(c, OTERR_VERSION, err, "The server and GFOpenTLS have no protocol version in common.", NULL, NULL);
     } else if (err == BR_ERR_BAD_CIPHER_SUITE || err == BR_ERR_INVALID_ALGORITHM) {
-        ot_set_error(c, OTERR_CIPHER, err, "The server chose a cipher suite, curve or signature OpenTLS does not offer.", NULL, NULL);
+        ot_set_error(c, OTERR_CIPHER, err, "The server chose a cipher suite, curve or signature GFOpenTLS does not offer.", NULL, NULL);
     } else if (err == BR_ERR_NO_RANDOM) {
         ot_set_error(c, OTERR_RANDOM, err, "No random numbers for the handshake.", NULL, NULL);
     } else if (err == BR_ERR_BAD_SIGNATURE) {
@@ -1004,8 +1004,8 @@ CONST_STRPTR OT_ErrorString(LONG error)
         "No trusted certificates could be read.",
         "Call out of order.",
         "No random numbers.",
-        "Not supported by this version of OpenTLS.",
-        "Internal error in OpenTLS.",
+        "Not supported by this version of GFOpenTLS.",
+        "Internal error in GFOpenTLS.",
         "The certificate is not the pinned one.",
     };
     if (error > 0 || error < -(LONG)(sizeof names / sizeof names[0]) + 1)

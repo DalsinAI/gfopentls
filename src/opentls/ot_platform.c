@@ -1,4 +1,4 @@
-/* OpenTLS: memory, locks, files, the clock and socket I/O, on AmigaOS
+/* GFOpenTLS: memory, locks, files, the clock and socket I/O, on AmigaOS
  * (exec, dos, bsdsocket through the caller's SocketBase) and on the x86 or
  * ARM64 cores for the host tests (POSIX).
  * MIT licensed and free. Copyright (c) 2026 AmigaChrome Team. */
@@ -208,13 +208,13 @@ int ot_platform_entropy(unsigned char *out, size_t len)
 
 int ot_trust_location(int kind, int i, char *buf, size_t size)
 {
-    /* The bundle lives in S: (OpenUp's OpenTLS part): in ENVARC: it would be
-     * copied into ENV:, in RAM, at every boot. ENVARC:OpenTLS/ca-bundle.pem
+    /* The bundle lives in S: (GFOpenUp's GFOpenTLS part): in ENVARC: it would be
+     * copied into ENV:, in RAM, at every boot. ENVARC:GFOpenTLS/ca-bundle.pem
      * is read only when S: has none. The user's own CAs are read straight
      * from ENVARC:, so they work before the next boot copies them. */
     static const char *const bundles[] = {
-        "S:OpenTLS/ca-bundle.pem", "ENVARC:OpenTLS/ca-bundle.pem", NULL };
-    static const char *const dirs[] = { "ENVARC:OpenTLS/certs", NULL };
+        "S:GFOpenTLS/ca-bundle.pem", "ENVARC:GFOpenTLS/ca-bundle.pem", NULL };
+    static const char *const dirs[] = { "ENVARC:GFOpenTLS/certs", NULL };
     static const char *const fallbacks[] = {
         "DEVS:Internet/curl-ca-bundle.crt", "AmiSSL:Certs/ca-bundle.crt", NULL };
     const char *const *list = kind == OT_TRUST_BUNDLE ? bundles
@@ -345,7 +345,7 @@ int ot_platform_entropy(unsigned char *out, size_t len)
     return got == len;
 }
 
-/* OPENTLS_ROOT stands in for S:OpenTLS and ENVARC:OpenTLS in the host tests. */
+/* OPENTLS_ROOT stands in for S:GFOpenTLS and ENVARC:GFOpenTLS in the host tests. */
 int ot_trust_location(int kind, int i, char *buf, size_t size)
 {
     const char *root = getenv("OPENTLS_ROOT");

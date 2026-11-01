@@ -1,9 +1,9 @@
-/* OpenCrypto's magic functions (oc_magic.h): the tags, and the 68k bodies,
+/* GFOpenCrypto's magic functions (oc_magic.h): the tags, and the 68k bodies,
  * which call the same C the host runs. Built with -fno-lto.
  * Copyright (c) 2026 AmigaChrome Team. MIT. */
 #include <string.h>
 
-#include "opencrypto/opencrypto.h"
+#include "gfopencrypto/gfopencrypto.h"
 #include "oc_magic.h"
 
 AC_MAGIC(ocm_probe, AC_MAGIC_OC_PROBE)

@@ -1,8 +1,8 @@
-/* OpenTLS: TLS 1.3's key schedule and record protection (RFC 8446
+/* GFOpenTLS: TLS 1.3's key schedule and record protection (RFC 8446
  * sections 5.2, 7.1 and 7.3), written from the RFC. HKDF is HMAC over
  * BearSSL's hash classes; the records are AES-GCM (put together here from
  * the connection's AES-CTR and GHASH tables), or ChaCha20-Poly1305 over its ChaCha20 and
- * Poly1305 ones (ot_glue.c chooses: OpenCrypto's where AC090 runs them as
+ * Poly1305 ones (ot_glue.c chooses: GFOpenCrypto's where AC090 runs them as
  * host code, BearSSL's constant-time 68k code otherwise).
  * tests/test_tls13_vectors.c checks all of it against RFC 8448.
  * MIT licensed and free. Copyright (c) 2026 The AmigaChrome Team. */

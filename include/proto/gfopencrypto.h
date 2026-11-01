@@ -3,10 +3,10 @@
 
 #include <exec/types.h>
 #include <exec/libraries.h>
-#include <libraries/opencrypto.h>
+#include <libraries/gfopencrypto.h>
 
 extern struct Library *OpenCryptoBase;
 
-#include <inline/opencrypto.h>
+#include <inline/gfopencrypto.h>
 
 #endif

@@ -2,9 +2,9 @@
 #define LIBRARIES_OPENCRYPTO_H
 
 #include <exec/types.h>
-#include <opencrypto/opencrypto.h>
+#include <gfopencrypto/gfopencrypto.h>
 
-#define OPENCRYPTOLIB_NAME "opencrypto.library"
+#define OPENCRYPTOLIB_NAME "gfopencrypto.library"
 #define OPENCRYPTOLIB_VERSION 2
 #define OPENCRYPTOLIB_REVISION 1
 
@@ -51,7 +51,7 @@ struct OCCleanseRequest {
  * operation needs (OC_STACK_NEEDED: sntrup761 builds its polynomials on
  * the stack, so that several tasks can call at once). OC_Accelerated()
  * says which operations this machine runs as host code (OCF_*, in
- * <opencrypto/opencrypto.h>): on AmigaChrome all of them, on a real Amiga
+ * <gfopencrypto/gfopencrypto.h>): on AmiCradle all of them, on a real Amiga
  * none, where every call runs as 68k code. */
 #define OCERR_ARGS (-1)
 #define OCERR_STACK (-2)

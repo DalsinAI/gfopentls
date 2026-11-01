@@ -1,4 +1,4 @@
-/* OpenCrypto: AES-128, -192 and -256 (FIPS 197) in CTR (SSH's SDCTR), CBC
+/* GFOpenCrypto: AES-128, -192 and -256 (FIPS 197) in CTR (SSH's SDCTR), CBC
  * and ECB, constant time.
  * Copyright (c) 2026 AmigaChrome Team. MIT.
  *
@@ -6,9 +6,9 @@
  * entries and keeps the one it wants by mask, sixteen state bytes in one
  * pass. That is slow as 68k code (a few kilobytes a second on a 68030), and
  * it is the fallback only: AC090's host code runs AES with the host's AES
- * instructions, and OpenPuTTY on a real Amiga keeps PuTTY's own bit-sliced
+ * instructions, and GFOpenPuTTY on a real Amiga keeps PuTTY's own bit-sliced
  * AES unless asked otherwise. */
-#include "opencrypto/opencrypto.h"
+#include "gfopencrypto/gfopencrypto.h"
 
 #include <string.h>
 

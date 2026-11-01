@@ -1,5 +1,5 @@
-/* OpenCrypto: the SSH primitives against published vectors, built for the
- * PC (ctest) and for the Amiga (build-amiga.sh: OpenCryptoVectors), so the
+/* GFOpenCrypto: the SSH primitives against published vectors, built for the
+ * PC (ctest) and for the Amiga (build-amiga.sh: GFOpenCryptoVectors), so the
  * same checks run on both.
  *   X25519        RFC 7748 section 5.2 (two vectors, 1 and 1,000 iterations)
  *                 and section 6.1 (Alice and Bob)
@@ -9,7 +9,7 @@
  *   SHA-256/512   FIPS 180 "abc" through the block functions
  *   sntrup761     key pair, encapsulation and decapsulation agree; a changed
  *                 ciphertext gives the implicit-rejection secret; and fixed
- *                 seeds give fixed bytes (OpenCrypto's own known answers, the
+ *                 seeds give fixed bytes (GFOpenCrypto's own known answers, the
  *                 same on every machine: the PC's and the 68k's must match)
  *   AES           FIPS 197 appendix C (128, 192, 256), and each mode's
  *                 round trip
@@ -18,7 +18,7 @@
  *                 and SHA-384, a 2048- and a 2049-bit key), and altered copies
  *   ECDSA         a P-256 signature from RFC 6979 section A.2.5
  * Copyright (c) 2026 AmigaChrome Team. MIT. */
-#include "opencrypto/opencrypto.h"
+#include "gfopencrypto/gfopencrypto.h"
 #include "vectors.h"
 
 #include <stdio.h>
@@ -207,7 +207,7 @@ static void test_sntrup761(void)
            (long)((t1 - t0) * 1000 / CLOCKS_PER_SEC), (long)((t2 - t1) * 1000 / CLOCKS_PER_SEC),
            (long)((t3 - t2) * 1000 / CLOCKS_PER_SEC));
 
-    /* OpenCrypto's known answers: SHA-256 over pk, sk, ct and ss for seeds
+    /* GFOpenCrypto's known answers: SHA-256 over pk, sk, ct and ss for seeds
      * 00..1f and (80)01..1f; computed on the PC, the same on the 68k */
     oc_sha256_init(&hc);
     oc_sha256_update(&hc, pk, sizeof pk);
@@ -215,7 +215,7 @@ static void test_sntrup761(void)
     oc_sha256_update(&hc, ct, sizeof ct);
     oc_sha256_update(&hc, ss1, sizeof ss1);
     oc_sha256_final(&hc, h);
-    check_hex(h, 32, OC_SNTRUP761_KAT, "sntrup761 known answer (OpenCrypto's, seeds 00..1f)");
+    check_hex(h, 32, OC_SNTRUP761_KAT, "sntrup761 known answer (GFOpenCrypto's, seeds 00..1f)");
 
     ct[100] ^= 4;
     oc_sntrup761_dec(ss2, ct, sk);
@@ -314,7 +314,7 @@ int main(int argc, char **argv)
 {
     if (argc > 1 && !strcmp(argv[1], "sntrup761")) {     /* that one alone */
         test_sntrup761();
-        printf("OpenCrypto sntrup761: %d of %d checks passed\n", checks - failures, checks);
+        printf("GFOpenCrypto sntrup761: %d of %d checks passed\n", checks - failures, checks);
         return failures ? 20 : 0;
     }
     test_x25519();
@@ -326,6 +326,6 @@ int main(int argc, char **argv)
     test_rsa();
     test_rsa_pss();
     test_ecdsa();
-    printf("OpenCrypto SSH primitives: %d of %d checks passed\n", checks - failures, checks);
+    printf("GFOpenCrypto SSH primitives: %d of %d checks passed\n", checks - failures, checks);
     return failures ? 20 : 0;
 }

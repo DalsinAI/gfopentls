@@ -1,15 +1,15 @@
-/* OpenCrypto: RSASSA-PSS signature checking, the EMSA-PSS-VERIFY steps of
+/* GFOpenCrypto: RSASSA-PSS signature checking, the EMSA-PSS-VERIFY steps of
  * RFC 8017 section 9.1.2 with MGF1 over the same hash. TLS 1.3 needs it
  * for RSA certificates (rsa_pss_rsae_sha256 and _sha384). Public values
  * only, so written for clarity, not constant time.
  *
  * This file stands alone: the hash comes in as a function, so that
- * opentls.library can build it over its own hashes without the rest of
- * OpenCrypto. oc_rsa_pss_verify() (opencrypto_pubkey.c) puts it together
- * with RSA's public operation and OpenCrypto's SHA-2.
+ * gfopentls.library can build it over its own hashes without the rest of
+ * GFOpenCrypto. oc_rsa_pss_verify() (opencrypto_pubkey.c) puts it together
+ * with RSA's public operation and GFOpenCrypto's SHA-2.
  *
  * MIT licensed and free. Copyright (c) 2026 The AmigaChrome Team. */
-#include "opencrypto/opencrypto.h"
+#include "gfopencrypto/gfopencrypto.h"
 
 #include <string.h>
 

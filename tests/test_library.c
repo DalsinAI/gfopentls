@@ -1,7 +1,7 @@
 #include <exec/types.h>
 #include <exec/libraries.h>
 #include <proto/exec.h>
-#include <proto/opencrypto.h>
+#include <proto/gfopencrypto.h>
 
 #include <stdio.h>
 #include <string.h>

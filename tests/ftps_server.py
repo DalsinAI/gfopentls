@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A tiny explicit-FTPS server (RFC 4217) for OpenTLS's tests, on Python's
+"""A tiny explicit-FTPS server (RFC 4217) for GFOpenTLS's tests, on Python's
 own ssl module: AUTH TLS, USER/PASS (any), PBSZ, PROT P, TYPE, PASV, RETR,
 QUIT. Like vsftpd's require_ssl_reuse, it refuses a data connection that
 does not resume the control connection's TLS session (522).
@@ -58,7 +58,7 @@ def serve(conn, ctx, root, require_reuse):
         line, rfile_buf = rfile_buf.split(b"\n", 1)
         return line.decode(errors="replace").strip()
 
-    send("220 OpenTLS test FTPS")
+    send("220 GFOpenTLS test FTPS")
     while True:
         line = readline()
         if line is None:

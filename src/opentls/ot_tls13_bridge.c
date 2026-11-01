@@ -1,4 +1,4 @@
-/* OpenTLS: when a server answers our TLS 1.3 ClientHello with TLS 1.2 (or
+/* GFOpenTLS: when a server answers our TLS 1.3 ClientHello with TLS 1.2 (or
  * older), BearSSL takes over the same connection.
  *
  * BearSSL was set up and reset as for a TLS 1.2-only connection, so it

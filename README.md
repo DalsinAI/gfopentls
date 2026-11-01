@@ -1,18 +1,18 @@
-# OpenTLS
+# GFOpenTLS
 
-OpenTLS is the native TLS and cryptography stack for the Open Amiga platform.
+GFOpenTLS is the native TLS and cryptography stack for the GFOpenAmiga platform.
 
 The repository contains two public Amiga-facing layers:
 
-- **OpenCrypto** — hashes, MAC/KDF, RNG, AEAD and public-key primitives.
-- **OpenTLS** — TLS 1.2/1.3, certificate validation, sessions and trust policy.
+- **GFOpenCrypto** — hashes, MAC/KDF, RNG, AEAD and public-key primitives.
+- **GFOpenTLS** — TLS 1.2/1.3, certificate validation, sessions and trust policy.
 
 Applications use these APIs directly. AmiSSL/OpenSSL become reference and
 compatibility technology during qualification rather than production
-dependencies of OpenBrowser.
+dependencies of GFOpenBrowser.
 
-Current slice (8 October 2026): `opencrypto.library` 2.0, with what SSH
-needs, for OpenPuTTY first:
+Current slice (8 October 2026): `gfopencrypto.library` 2.0, with what SSH
+needs, for GFOpenPuTTY first:
 
 | What | Notes |
 | --- | --- |
@@ -26,24 +26,24 @@ needs, for OpenPuTTY first:
 | AES-128/192/256 | CTR (SSH's SDCTR), CBC, ECB; constant time |
 | ChaCha20, Poly1305 | the 64-bit nonce form SSH's `chacha20-poly1305@openssh.com` uses |
 
-On AmigaChrome the x86 or ARM64 cores do the heavy work: each operation is an AC090
+On AmiCradle the x86 or ARM64 cores do the heavy work: each operation is an AC090
 magic function (`library/oc_magic.h`), which AC090 runs as x86 or ARM64 code from
 the same C (amigachrome's `jit_crypto.c`); everywhere else the library
 runs it as 68k code. `OC_Accelerated()` says which operations are x86 or ARM64 code. In an
-AmigaChrome lab (scratch copy of Instance-11, AC090 68040, 8 October 2026)
-OpenPuTTY's NTRU Prime / Curve25519 key exchange went from 11 s with
-PuTTY's own code on the old JIT to about 60 ms with OpenCrypto as x86
+AmiCradle lab (scratch copy of Instance-11, AC090 68040, 8 October 2026)
+GFOpenPuTTY's NTRU Prime / Curve25519 key exchange went from 11 s with
+PuTTY's own code on the old JIT to about 60 ms with GFOpenCrypto as x86
 code; DESIGN.md section 8 has the 68k figures and the tests.
 
-`opentls.library` 1.0 (9 October 2026): a TLS 1.2 client on BearSSL (MIT)
-with OpenCrypto doing the maths that the x86 or ARM64 cores can do on
-AmigaChrome. Certificate chains against a trust store
-(`S:OpenTLS/ca-bundle.pem`, local additions in `ENVARC:OpenTLS/certs/`), host names and
+`gfopentls.library` 1.0 (9 October 2026): a TLS 1.2 client on BearSSL (MIT)
+with GFOpenCrypto doing the maths that the x86 or ARM64 cores can do on
+AmiCradle. Certificate chains against a trust store
+(`S:GFOpenTLS/ca-bundle.pem`, local additions in `ENVARC:GFOpenTLS/certs/`), host names and
 IP addresses, SNI, ALPN, session resumption by session ID (FTPS data
 connections), verify modes and pinned certificates.
-`docs/AutoDocs-OpenTLS.md` is the API; DESIGN.md section 9 the design.
+`docs/AutoDocs-GFOpenTLS.md` is the API; DESIGN.md section 9 the design.
 
-`opentls.library` 1.3 (20 October 2026): TLS 1.3 as well, our own code from
+`gfopentls.library` 1.3 (20 October 2026): TLS 1.3 as well, our own code from
 RFC 8446: one round trip less per connection. One ClientHello offers TLS
 1.3 and 1.2; a TLS 1.2 server is handed to BearSSL on the same connection.
 X25519 (P-256 after a HelloRetryRequest), AES-GCM and ChaCha20-Poly1305,
@@ -55,45 +55,45 @@ DESIGN.md section 10 has the design.
 ## Building and testing
 
     cmake -S . -B build && cmake --build build && ctest --test-dir build
-        OpenTLS on the x86 or ARM64 cores against local servers (openssl
-        s_server, tests/ftps_server.py), and OpenCrypto: the published vectors
+        GFOpenTLS on the x86 or ARM64 cores against local servers (openssl
+        s_server, tests/ftps_server.py), and GFOpenCrypto: the published vectors
         (tests/test_ssh_primitives.c) and, with Python's cryptography
         package, random inputs against OpenSSL (tests/differential.py)
     tests/interop_putty.sh
         sntrup761 against PuTTY 0.85's own, both ways (PuTTY is fetched
         as its release tarball and checked against its SHA-256)
     ./build-amiga-tls.sh
-        opentls.library and its Amiga test programs (OpenTLSClient,
-        OpenTLSFTPSGet), with the os32 GCC 16 stove; STOVE= another stove
+        gfopentls.library and its Amiga test programs (GFOpenTLSClient,
+        GFOpenTLSFTPSGet), with the os32 GCC 16 stove; STOVE= another stove
         (the os32 stove's GCC 6.5 builds it too); 68040 code, CPU=060 for
         the 68060
     tools/make_ca_bundle.py OUTDIR
-        ca-bundle.pem and ca-bundle.LICENSE for S:OpenTLS/: Mozilla's
+        ca-bundle.pem and ca-bundle.LICENSE for S:GFOpenTLS/: Mozilla's
         CA list from this machine's ca-certificates package (MPL-2.0), and
         nothing else
     tests/lab/lab_amiga.sh LAB BUILD LABEL
-        the same programs on the Amiga, in a lab made with AmigaChrome's
+        the same programs on the Amiga, in a lab made with AmiCradle's
         scripts/lab_instance.py, against local test servers
     ./build-amiga.sh
-        opencrypto.library and the Amiga tests (OpenCryptoLibTest,
-        OpenCryptoVectors: the same vectors on the 68k; OpenCryptoBench:
+        gfopencrypto.library and the Amiga tests (GFOpenCryptoLibTest,
+        GFOpenCryptoVectors: the same vectors on the 68k; GFOpenCryptoBench:
         each call checked and timed), with the os32 GCC 16 stove; 68040
         code, CPU=060 for the 68060
 
 ## Architecture
 
 ```text
-OpenBrowser / curl OpenTLS backend / native applications
+GFOpenBrowser / curl GFOpenTLS backend / native applications
                          |
-                    opentls.library
+                    gfopentls.library
                          |
-                  opencrypto.library
+                  gfopencrypto.library
               /          |           \
-           68040       AC090       x86/ARM64/OpenGPU
+           68040       AC090       x86/ARM64/GFOpenGPU
 ```
 
-OpenGPU is optional and only used where batching makes it faster. TLS semantics
-never live in OpenGPU.
+GFOpenGPU is optional and only used where batching makes it faster. TLS semantics
+never live in GFOpenGPU.
 
 ## Correctness rule
 

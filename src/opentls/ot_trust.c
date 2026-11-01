@@ -1,5 +1,5 @@
-/* OpenTLS: trust anchors from PEM certificates, and the system trust store
- * (S:OpenTLS/ca-bundle.pem and ENVARC:OpenTLS/certs/, docs/AutoDocs-OpenTLS.md),
+/* GFOpenTLS: trust anchors from PEM certificates, and the system trust store
+ * (S:GFOpenTLS/ca-bundle.pem and ENVARC:GFOpenTLS/certs/, docs/AutoDocs-GFOpenTLS.md),
  * loaded once and shared by every context.
  * MIT licensed and free. Copyright (c) 2026 AmigaChrome Team. */
 #include "ot_internal.h"

@@ -1,4 +1,4 @@
-/* OpenCrypto: RSA's public operation and ECDSA verification on the NIST
+/* GFOpenCrypto: RSA's public operation and ECDSA verification on the NIST
  * curves P-256, P-384 and P-521, for checking SSH host keys and
  * certificates. Both handle public values only (a public key, a signature,
  * a hash), so they are written for clarity, not constant time.
@@ -6,7 +6,7 @@
  *
  * Numbers are arrays of 32-bit limbs, least significant first; products
  * modulo an odd number use Montgomery's method (CIOS). */
-#include "opencrypto/opencrypto.h"
+#include "gfopencrypto/gfopencrypto.h"
 
 #include <string.h>
 

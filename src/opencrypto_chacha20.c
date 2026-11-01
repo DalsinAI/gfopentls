@@ -1,8 +1,8 @@
-/* OpenCrypto: ChaCha20 (the original 64-bit nonce and counter, as SSH's
+/* GFOpenCrypto: ChaCha20 (the original 64-bit nonce and counter, as SSH's
  * chacha20-poly1305@openssh.com uses it), Poly1305, and the seed
  * expansion the key generators use. Constant time.
  * Copyright (c) 2026 AmigaChrome Team. MIT. */
-#include "opencrypto/opencrypto.h"
+#include "gfopencrypto/gfopencrypto.h"
 
 #include <string.h>
 

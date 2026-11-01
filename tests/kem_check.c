@@ -3,7 +3,7 @@
  * Copyright (c) 2026 AmigaChrome Team. MIT. */
 #include <stdio.h>
 #include <string.h>
-#include "opencrypto/opencrypto.h"
+#include "gfopencrypto/gfopencrypto.h"
 
 static void h(const char *name, const void *p, size_t n)
 {

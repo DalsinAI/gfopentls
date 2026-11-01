@@ -1,4 +1,4 @@
-/* OpenTLS unit tests: every function table OpenCrypto fills in for BearSSL
+/* GFOpenTLS unit tests: every function table GFOpenCrypto fills in for BearSSL
  * (ot_glue.c) against BearSSL's own, on random inputs; and the address
  * parser, the session rules and the error names.
  * MIT licensed and free. Copyright (c) 2026 AmigaChrome Team. */
@@ -7,7 +7,7 @@
 #include <string.h>
 #include "ot_internal.h"
 #include "ot_tls13.h"
-#include <clib/opentls_protos.h>
+#include <clib/gfopentls_protos.h>
 
 static int failures;
 #define CHECK(cond, what) do { if (!(cond)) { printf("FAIL %s (line %d)\n", what, __LINE__); ++failures; } } while (0)
@@ -23,7 +23,7 @@ static void test_hashes(const struct ot_impls *m)
     static unsigned char data[3000];
     int k, round;
     for (k = 0; k < 3; ++k) {
-        CHECK(mine[k] != ref[k], "OpenCrypto hash selected");
+        CHECK(mine[k] != ref[k], "GFOpenCrypto hash selected");
         for (round = 0; round < 200; ++round) {
             br_hash_compat_context a, b;
             unsigned char oa[64], ob[64], sa[64], sb[64];

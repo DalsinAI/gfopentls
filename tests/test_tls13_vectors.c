@@ -1,7 +1,7 @@
-/* OpenTLS: the TLS 1.3 key schedule, record protection, Finished, PSK
+/* GFOpenTLS: the TLS 1.3 key schedule, record protection, Finished, PSK
  * binder and CertificateVerify (ot_tls13_keys.c, ot_tls13.c) against the
  * traces of RFC 8448 (tests/rfc8448.h), with both function tables
- * (OpenCrypto's and BearSSL's); and records sealed with one table and
+ * (GFOpenCrypto's and BearSSL's); and records sealed with one table and
  * opened with the other, for the suites RFC 8448 does not show.
  * MIT licensed and free. Copyright (c) 2026 The AmigaChrome Team. */
 #include <stdarg.h>
@@ -297,13 +297,13 @@ int main(void)
     struct ot_impls oc, bear;
     ot_glue_select(&oc, 1);
     ot_glue_select(&bear, 0);
-    label = "RFC 8448 3, OpenCrypto";
+    label = "RFC 8448 3, GFOpenCrypto";
     test_rfc8448_s3(&oc);
     label = "RFC 8448 3, BearSSL";
     test_rfc8448_s3(&bear);
     label = "RFC 8448 4";
     test_rfc8448_s4();
-    label = "RFC 8448 5, OpenCrypto";
+    label = "RFC 8448 5, GFOpenCrypto";
     test_rfc8448_s5(&oc);
     label = "RFC 8448 5, BearSSL";
     test_rfc8448_s5(&bear);

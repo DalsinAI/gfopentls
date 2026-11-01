@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""OpenCrypto against Python's cryptography package (OpenSSL underneath) on
+"""GFOpenCrypto against Python's cryptography package (OpenSSL underneath) on
 random inputs: X25519, Ed25519 (good and altered signatures), ChaCha20,
 Poly1305, AES (CTR, CBC, ECB; 128, 192, 256), RSA's public operation
 (2048, 3072, 4096 bits), ECDSA (P-256, P-384, P-521; good and altered),

@@ -1,9 +1,9 @@
-/* OpenCrypto: a line-at-a-time front end for tests/differential.py, which
- * checks OpenCrypto against Python's cryptography package (OpenSSL) on
+/* GFOpenCrypto: a line-at-a-time front end for tests/differential.py, which
+ * checks GFOpenCrypto against Python's cryptography package (OpenSSL) on
  * random inputs. Each line: an operation and its arguments in hex ("-" is
  * empty); the answer: hex, or 0/1.
  * Copyright (c) 2026 AmigaChrome Team. MIT. */
-#include "opencrypto/opencrypto.h"
+#include "gfopencrypto/gfopencrypto.h"
 
 #include <stdio.h>
 #include <stdlib.h>

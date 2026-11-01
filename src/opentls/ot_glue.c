@@ -1,12 +1,12 @@
-/* OpenTLS: BearSSL's pluggable maths, done by OpenCrypto.
+/* GFOpenTLS: BearSSL's pluggable maths, done by GFOpenCrypto.
  *
  * BearSSL takes its hash functions, block ciphers, ChaCha20/Poly1305, RSA,
- * ECDSA and elliptic curves through function tables. Where OpenCrypto has
+ * ECDSA and elliptic curves through function tables. Where GFOpenCrypto has
  * the same operation and it runs on the x86 or ARM64 cores
- * (opencrypto.library's OC_Accelerated()), these tables send it there;
+ * (gfopencrypto.library's OC_Accelerated()), these tables send it there;
  * everything else, and everything on a real Amiga, stays BearSSL's own
  * constant-time 68k code. The host tests build these tables over
- * OpenCrypto's portable C, so both paths are tested on every run.
+ * GFOpenCrypto's portable C, so both paths are tested on every run.
  *
  * MIT licensed and free. Copyright (c) 2026 AmigaChrome Team. */
 #include "ot_internal.h"
@@ -15,14 +15,14 @@
 #ifdef __amigaos__
 #include <exec/execbase.h>
 #include <proto/exec.h>
-#include <libraries/opencrypto.h>
-#include <inline/opencrypto.h>
+#include <libraries/gfopencrypto.h>
+#include <inline/gfopencrypto.h>
 struct Library *OpenCryptoBase;
 #else
-#include <opencrypto/opencrypto.h>
+#include <gfopencrypto/gfopencrypto.h>
 #endif
 
-/* ---- the calls into OpenCrypto ---- */
+/* ---- the calls into GFOpenCrypto ---- */
 
 #ifdef __amigaos__
 static ULONG oc_flags;
@@ -34,7 +34,7 @@ static void oc_open(void)
     Forbid();
     if (!oc_tried) {
         oc_tried = 1;
-        OpenCryptoBase = OpenLibrary((CONST_STRPTR)"opencrypto.library", 2);
+        OpenCryptoBase = OpenLibrary((CONST_STRPTR)"gfopencrypto.library", 2);
         oc_flags = OpenCryptoBase ? OC_Accelerated() : 0;
     }
     Permit();
@@ -112,7 +112,7 @@ static int g_ecdsa(int curve, const unsigned char *qx, const unsigned char *qy,
     return OC_ECDSAVerify(&r);
 }
 
-/* Ed25519 for TLS 1.3 server certificates: opencrypto.library's, whether
+/* Ed25519 for TLS 1.3 server certificates: gfopencrypto.library's, whether
  * or not the host runs it, since BearSSL has none */
 int ot_glue_has_ed25519(void)
 {
@@ -142,7 +142,7 @@ ULONG ot_glue_accelerated(void)
     return f;
 }
 
-#else /* the host tests: OpenCrypto's portable C */
+#else /* the host tests: GFOpenCrypto's portable C */
 
 void ot_glue_cleanup(void) {}
 
@@ -181,7 +181,7 @@ ULONG ot_glue_accelerated(void)
 }
 #endif
 
-/* ---- SHA-256, SHA-384, SHA-512 over OpenCrypto's block functions ---- */
+/* ---- SHA-256, SHA-384, SHA-512 over GFOpenCrypto's block functions ---- */
 
 typedef struct {
     const br_hash_class *vtable;
@@ -484,7 +484,7 @@ static uint32_t ot_ecdsa_vrfy_asn1(const br_ec_impl *impl, const void *hash, siz
     return g_ecdsa(bits, pk->q + 1, pk->q + 1 + flen, r, s, hash, hash_len) == 1;
 }
 
-/* ---- elliptic curves: X25519 through OpenCrypto, NIST curves BearSSL's ---- */
+/* ---- elliptic curves: X25519 through GFOpenCrypto, NIST curves BearSSL's ---- */
 
 static const br_ec_impl *ec_base(void)
 {

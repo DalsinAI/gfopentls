@@ -1,5 +1,5 @@
-/* OpenCrypto: arithmetic in GF(2^255 - 19), shared by X25519 and Ed25519.
- * Internal to OpenCrypto (each user includes it once).
+/* GFOpenCrypto: arithmetic in GF(2^255 - 19), shared by X25519 and Ed25519.
+ * Internal to GFOpenCrypto (each user includes it once).
  * Copyright (c) 2026 AmigaChrome Team. MIT.
  *
  * Sixteen limbs of 16 bits, signed, as TweetNaCl lays them out, kept in
@@ -7,7 +7,7 @@
  * operation does the same work whatever the values (no branch or index on
  * a secret), so X25519 runs in constant time. A product of two 32-bit ints
  * into 64 bits is one MULS.L on a 68020 to 68040 (and host code on
- * AmigaChrome); 68060 builds call libgcc for it. */
+ * AmiCradle); 68060 builds call libgcc for it. */
 #ifndef OC_FE25519_H
 #define OC_FE25519_H
 

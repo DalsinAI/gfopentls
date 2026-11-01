@@ -1,14 +1,14 @@
-/* OpenCryptoBench: opencrypto.library 2's operations, checked and timed on
+/* GFOpenCryptoBench: gfopencrypto.library 2's operations, checked and timed on
  * the Amiga. Prints which run as host code (OC_Accelerated), then for each
  * operation a check against a fixed answer and its time.
- *   OpenCryptoBench [ROUNDS]
+ *   GFOpenCryptoBench [ROUNDS]
  * Copyright (c) 2026 AmigaChrome Team. MIT. */
 #include <exec/types.h>
 #include <exec/libraries.h>
 #include <devices/timer.h>
 #include <proto/exec.h>
 #include <proto/timer.h>
-#include <proto/opencrypto.h>
+#include <proto/gfopencrypto.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -61,12 +61,12 @@ int main(int argc, char **argv)
     TimerBase = treq.tr_node.io_Device;
     OpenCryptoBase = OpenLibrary((CONST_STRPTR)OPENCRYPTOLIB_NAME, 2);
     if (!OpenCryptoBase) {
-        puts("OpenCryptoBench: no opencrypto.library 2");
+        puts("GFOpenCryptoBench: no gfopencrypto.library 2");
         CloseDevice((struct IORequest *)&treq);
         return 20;
     }
     acc = OC_Accelerated();
-    printf("opencrypto.library %u.%u; host code (AC090) for: %s%s%s%s%s%s%s%s%s%s%s\n",
+    printf("gfopencrypto.library %u.%u; host code (AC090) for: %s%s%s%s%s%s%s%s%s%s%s\n",
            (unsigned)OpenCryptoBase->lib_Version, (unsigned)OpenCryptoBase->lib_Revision,
            acc ? "" : "nothing (68k code)",
            acc & OCF_X25519 ? "X25519 " : "", acc & OCF_SNTRUP761 ? "sntrup761 " : "",
@@ -167,7 +167,7 @@ int main(int argc, char **argv)
         ok &= OC_RSAPSSVerify(&r) == 0;
         report("RSASSA-PSS 2048 verify (SHA-256)", ok, t, n);
     }
-    printf("OpenCryptoBench: %s\n", fails ? "FAILED" : "all checks passed");
+    printf("GFOpenCryptoBench: %s\n", fails ? "FAILED" : "all checks passed");
     CloseLibrary(OpenCryptoBase);
     CloseDevice((struct IORequest *)&treq);
     return fails ? 20 : 0;
