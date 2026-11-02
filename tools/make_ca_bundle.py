@@ -104,7 +104,7 @@ def main():
         names.append(ascii_name(f.stem))
     head = (f"# GFOpenTLS CA bundle: Mozilla's CA list, {len(files)} certificates.\n"
             f"# From the {PACKAGE} package {version} ({a.source}/*.crt), made {today}\n"
-            f"# by openamigatls tools/make_ca_bundle.py.\n"
+            f"# by gfopentls tools/make_ca_bundle.py.\n"
             "# Under the Mozilla Public License 2.0: ca-bundle.LICENSE says where its\n"
             "# source is. Add your own CAs in ENVARC:GFOpenTLS/certs/, not here: a GFOpenUp\n"
             "# upgrade replaces this file.\n\n")

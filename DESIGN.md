@@ -75,9 +75,9 @@ in A0, as version 1's calls).
 
 - **Who does the work.** Each heavy operation is a magic function
   (`library/oc_magic.h`): a 12-byte tag in front of a stack-convention
-  function, with the ids `$00010200` to `$0001020c` in amigachrome-guest's
+  function, with the ids `$00010200` to `$0001020c` in amicradle-guest's
   `ac_magic.h`. On AmiCradle AC090 runs it as host code
-  (amigachrome's `jit_crypto.c`), compiled from this repository's
+  (amicradle's `jit_crypto.c`), compiled from this repository's
   `src/` (copied there by its `opencrypto/sync.sh`); everywhere else the
   library runs the same C as 68k code. `OC_Accelerated()` (the probe,
   `$00010200`) says which operations are host code on this machine.

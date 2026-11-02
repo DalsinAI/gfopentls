@@ -13,7 +13,7 @@
 #   OUT      the output directory (default build-amiga-tls)
 #   EXTRA_CFLAGS  more compiler flags (e.g. -DOT_GLUE_MASK=1: measuring
 #            with some operations left to BearSSL; OTACC_* bits)
-#   FPCR_CHECK  openamigartg's tools/fpcr_check.py, run on the results when
+#   FPCR_CHECK  gfopenrtg's tools/fpcr_check.py, run on the results when
 #               set (the GCC 16 -m68040 FPCR clash; the build uses no FPU)
 # Outputs: lib/gfopentls.library, tests/GFOpenTLSClient, tests/GFOpenTLSFTPSGet,
 # and the headers under include/.
