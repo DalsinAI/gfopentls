@@ -4,7 +4,7 @@
  * another emulator).
  * Copyright (c) 2026 AmiCradle Team. MIT.
  *
- * The tag is AmiCradle's published one (amigachrome-guest
+ * The tag is AmiCradle's published one (amicradle-guest
  * common/amiga/ac_magic.h, version 1): the function's entry is
  *     BRA.S *+12; DC.L 'ACMF'; DC.W $0001; DC.L id; JMP body
  * and the ids below are in ac_magic.h's list and in AC090's table

@@ -28,7 +28,7 @@ needs, for GFOpenPuTTY first:
 
 On AmiCradle the x86 or ARM64 cores do the heavy work: each operation is an AC090
 magic function (`library/oc_magic.h`), which AC090 runs as x86 or ARM64 code from
-the same C (amigachrome's `jit_crypto.c`); everywhere else the library
+the same C (amicradle's `jit_crypto.c`); everywhere else the library
 runs it as 68k code. `OC_Accelerated()` says which operations are x86 or ARM64 code. In an
 AmiCradle lab (scratch copy of Instance-11, AC090 68040, 8 October 2026)
 GFOpenPuTTY's NTRU Prime / Curve25519 key exchange went from 11 s with
@@ -101,5 +101,5 @@ Crypto is stricter than graphics: no accelerated implementation is enabled
 until it passes standard vectors and differential tests against a trusted
 reference implementation.
 
-The existing `opentls.key/1` service in DalsinAI/openamigaservice remains the
+The existing `opentls.key/1` service in DalsinAI/gfopenservice remains the
 bridge-era reference for slow public-key work while this native stack grows.

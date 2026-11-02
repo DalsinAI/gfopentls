@@ -4,7 +4,7 @@
 #   STOVE    the stove (default ~/AmiCradle/stoves/os32-gcc16)
 #   CPU      040 (default: the 68040, no FPU needed) or 060
 #   OUT      the output directory (default build-amiga)
-#   FPCR_CHECK  openamigartg's tools/fpcr_check.py, run on the objects when
+#   FPCR_CHECK  gfopenrtg's tools/fpcr_check.py, run on the objects when
 #               set (the GCC 16 -m68040 FPCR clash; the build uses no FPU)
 # Outputs: lib/gfopencrypto.library, tests/GFOpenCryptoLibTest (version 1's
 # calls), tests/GFOpenCryptoVectors (the published vectors, as on the PC),
