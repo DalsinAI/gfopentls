@@ -29,7 +29,7 @@ SRC="$HERE/src/opencrypto_sha256.c $HERE/src/opencrypto_sha512.c
      $HERE/src/opencrypto_sntrup761.c $HERE/src/opencrypto_chacha20.c
      $HERE/src/opencrypto_aes.c $HERE/src/opencrypto_pubkey.c $HERE/src/opencrypto_pss.c"
 
-mkdir -p "$OUT/include/opencrypto" "$OUT/include/libraries" \
+mkdir -p "$OUT/include/gfopencrypto" "$OUT/include/libraries" \
          "$OUT/include/inline" "$OUT/include/proto" "$OUT/lib" "$OUT/tests" "$OUT/obj"
 
 cp "$HERE/include/gfopencrypto/gfopencrypto.h" "$OUT/include/gfopencrypto/"
