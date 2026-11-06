@@ -24,7 +24,7 @@ case "${CPU:-040}" in
     060) CPUFLAGS="-m68060" ;;
     *) echo "CPU is 040 or 060 (builds are 68040 only, with a 68060 variant)"; exit 2 ;;
 esac
-SRC="$HERE/src/opencrypto_sha256.c $HERE/src/opencrypto_sha512.c
+SRC="$HERE/src/opencrypto_sha256.c $HERE/src/opencrypto_sha512.c $HERE/src/opencrypto_sha1.c
      $HERE/src/opencrypto_x25519.c $HERE/src/opencrypto_ed25519.c
      $HERE/src/opencrypto_sntrup761.c $HERE/src/opencrypto_chacha20.c
      $HERE/src/opencrypto_aes.c $HERE/src/opencrypto_pubkey.c $HERE/src/opencrypto_pss.c"

@@ -13,6 +13,8 @@ extern "C" {
 #define OC_SHA384_BYTES 48
 #define OC_SHA512_BYTES 64
 #define OC_SHA512_BLOCK_BYTES 128
+#define OC_SHA1_BYTES 20
+#define OC_SHA1_BLOCK_BYTES 64
 
 typedef struct OCSHA256 {
     uint32_t h[8];
@@ -27,6 +29,13 @@ typedef struct OCSHA512 {
     uint8_t block[OC_SHA512_BLOCK_BYTES];
     size_t block_used;
 } OCSHA512;
+
+typedef struct OCSHA1 {
+    uint32_t h[5];
+    uint64_t total_bytes;
+    uint8_t block[OC_SHA1_BLOCK_BYTES];
+    size_t block_used;
+} OCSHA1;
 
 void oc_sha256_init(OCSHA256 *ctx);
 void oc_sha256_update(OCSHA256 *ctx, const void *data, size_t length);
@@ -63,6 +72,15 @@ void oc_sha512_final(OCSHA512 *ctx, uint8_t out[OC_SHA512_BYTES]);
  * machine. For callers that do their own buffering and padding. */
 void oc_sha256_blocks(uint8_t state[OC_SHA256_BYTES], const void *data, size_t nblocks);
 void oc_sha512_blocks(uint8_t state[OC_SHA512_BYTES], const void *data, size_t nblocks);
+
+/* SHA-1 (FIPS 180-4, 6 Nov 2026), for formats that name it (file identity
+ * checks, older protocols). Not collision resistant: new designs use
+ * SHA-256. oc_sha1_blocks keeps the chaining value as 20 big-endian bytes. */
+void oc_sha1_init(OCSHA1 *ctx);
+void oc_sha1_update(OCSHA1 *ctx, const void *data, size_t length);
+void oc_sha1_final(OCSHA1 *ctx, uint8_t out[OC_SHA1_BYTES]);
+void oc_sha1(const void *data, size_t length, uint8_t out[OC_SHA1_BYTES]);
+void oc_sha1_blocks(uint8_t state[OC_SHA1_BYTES], const void *data, size_t nblocks);
 
 /* ---- for SSH's key exchanges, host keys and default cipher (8 Oct 2026) ---- */
 

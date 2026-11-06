@@ -3,7 +3,7 @@
 random inputs: X25519, Ed25519 (good and altered signatures), ChaCha20,
 Poly1305, AES (CTR, CBC, ECB; 128, 192, 256), RSA's public operation
 (2048, 3072, 4096 bits), ECDSA (P-256, P-384, P-521; good and altered),
-SHA-256, SHA-512, and sntrup761 round trips.
+SHA-1, SHA-256, SHA-512, and sntrup761 round trips.
   python3 tests/differential.py OC_CLI [ROUNDS]
 Copyright (c) 2026 AmiCradle Team. MIT."""
 import hashlib, os, random, subprocess, sys
@@ -66,6 +66,7 @@ for i in range(rounds):
     # SHA-2
     data = os.urandom(random.randrange(0, 1000))
     check("SHA-256", ask("sha256", H(data)) == hashlib.sha256(data).hexdigest())
+    check("SHA-1", ask("sha1", H(data)) == hashlib.sha1(data).hexdigest())
     check("SHA-512", ask("sha512", H(data)) == hashlib.sha512(data).hexdigest())
 
 # slower ones, fewer rounds

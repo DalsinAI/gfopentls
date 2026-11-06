@@ -286,3 +286,32 @@ over the primitives the TLS 1.2 path already uses.
   every other call refused, non-blocking sockets. All of it also runs
   clean under AddressSanitizer and UndefinedBehaviorSanitizer (with
   BearSSL built for aligned access).
+
+## 11. GFOpenCrypto 2.2: SHA-1 (6 November 2026)
+
+Section 3 listed SHA-1 from the start; it lands now because ported
+applications name it (OpenCPN hashes chart files with it, through its
+own `ssl_sha1`).
+
+- **Code.** `src/opencrypto_sha1.c`, our own from FIPS 180-4: the
+  functions of 4.1.1, the constants of 4.2.1, the padding of 5.1.1, the
+  initial value of 5.3.1 and the computation of 6.1.2, with the 16-word
+  circular message schedule of 6.1.3 (64 bytes of stack per block, not
+  320).
+- **API.** `OC_SHA1()` takes the `OCBufferHash` of `OC_SHA256()` and writes
+  20 bytes; `OC_SHA1Blocks()` takes the `OCBlocksRequest` of
+  `OC_SHA256Blocks()` with a 20-byte chaining value (start it from
+  `OC_SHA1_IV`), so a file can be hashed a buffer at a time. Both at the
+  end of the table (LVOs -174 and -180), revision 2. Linked code:
+  `oc_sha1_init/update/final`, `oc_sha1`, `oc_sha1_blocks`.
+- **68k everywhere.** No magic function: SHA-1 is cheap, and an AC090 id
+  would need amicradle's table changed as well. No `OCF_` flag.
+- **Not for new designs.** SHA-1 is not collision resistant (SHAttered,
+  2017). gfopentls.library does not use it from here; BearSSL keeps its own
+  for TLS 1.2's older signature hashes.
+- **Tests.** `tests/test_opencrypto.c`: FIPS 180-4's examples ("abc", the
+  448-bit message, a million "a"), the empty message, and the same answers
+  byte at a time and through the block function with our own padding at
+  the 55/56/63/64-byte edges. `tests/differential.py` checks it against
+  Python's hashlib on random lengths. `tests/test_library.c` calls both
+  library entries.

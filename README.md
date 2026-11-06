@@ -23,6 +23,7 @@ needs, for GFOpenPuTTY first:
 | ECDSA verification | P-256, P-384, P-521 |
 | RSA public operation | up to 8192 bits, for PKCS #1 signatures |
 | RSASSA-PSS verification | version 2.1 (`OC_RSAPSSVerify`), for TLS 1.3 certificates |
+| SHA-1 | version 2.2 (`OC_SHA1`, `OC_SHA1Blocks`), FIPS 180-4, for formats that name it (file identity checks); not collision resistant |
 | AES-128/192/256 | CTR (SSH's SDCTR), CBC, ECB; constant time |
 | ChaCha20, Poly1305 | the 64-bit nonce form SSH's `chacha20-poly1305@openssh.com` uses |
 

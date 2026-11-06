@@ -50,6 +50,29 @@ int main(void)
         "272c32ab0eded1631a8b605a43ff5bed"
         "8086072ba1e7cc2358baeca134c825a7"));
 
+    /* revision 2: SHA-1, one shot and as blocks ("abc", padded by hand) */
+    if ((OC_Version() & 0xffff) >= 2) {
+        static const UBYTE iv[20] = OC_SHA1_IV;
+        UBYTE block[64];
+        struct OCBlocksRequest blocks;
+
+        OC_SHA1(&hash);
+        CHECK(same_hex(out, 20, "a9993e364706816aba3e25717850c26c9cd0d89d"));
+
+        memset(block, 0, sizeof block);
+        memcpy(block, "abc", 3);
+        block[3] = 0x80;
+        block[63] = 24;
+        memcpy(out, iv, 20);
+        blocks.state = out;
+        blocks.data = block;
+        blocks.blocks = 1;
+        CHECK(OC_SHA1Blocks(&blocks) == 0);
+        CHECK(same_hex(out, 20, "a9993e364706816aba3e25717850c26c9cd0d89d"));
+        blocks.state = NULL;
+        CHECK(OC_SHA1Blocks(&blocks) == OCERR_ARGS);
+    }
+
     hmac.key = "key";
     hmac.key_length = 3;
     hmac.data = "The quick brown fox jumps over the lazy dog";
@@ -71,7 +94,7 @@ int main(void)
     for (i = 0; i < sizeof out; ++i)
         CHECK(out[i] == 0);
 
-    puts("OPENCRYPTOLIB PASS sha256 sha384 hmac ct-cleanse");
+    puts("OPENCRYPTOLIB PASS sha256 sha384 sha1 hmac ct-cleanse");
 
 done:
     if (OpenCryptoBase)

@@ -35,5 +35,8 @@
 #define OC_ECDSAVerify(req) LP1(0xa2, LONG, OC_ECDSAVerify, struct OCECDSARequest *, req, a0, , OPENCRYPTO_BASE_NAME)
 /* version 2, revision 1 */
 #define OC_RSAPSSVerify(req) LP1(0xa8, LONG, OC_RSAPSSVerify, struct OCRSAPSSRequest *, req, a0, , OPENCRYPTO_BASE_NAME)
+/* version 2, revision 2 */
+#define OC_SHA1(req) LP1NR(0xae, OC_SHA1, struct OCBufferHash *, req, a0, , OPENCRYPTO_BASE_NAME)
+#define OC_SHA1Blocks(req) LP1(0xb4, LONG, OC_SHA1Blocks, struct OCBlocksRequest *, req, a0, , OPENCRYPTO_BASE_NAME)
 
 #endif

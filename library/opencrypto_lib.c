@@ -1,4 +1,4 @@
-/* gfopencrypto.library 2.1
+/* gfopencrypto.library 2.2
  * Copyright (c) 2026 AmiCradle Team. MIT.
  *
  * Version 2 (8 Oct 2026) adds what SSH needs: X25519, sntrup761, Ed25519,
@@ -6,7 +6,9 @@
  * AES. Each goes through a magic function (oc_magic.h): host code on
  * AmiCradle, the 68k body elsewhere. Revision 1 (20 Oct 2026) adds
  * RSASSA-PSS verification for TLS 1.3: RSA's magic function, then the
- * encoding check as 68k code (opencrypto_pss.c, a few hashes). */
+ * encoding check as 68k code (opencrypto_pss.c, a few hashes).
+ * Revision 2 (6 Nov 2026) adds SHA-1 (OC_SHA1, OC_SHA1Blocks), our own
+ * code from FIPS 180-4 (opencrypto_sha1.c), as 68k code everywhere. */
 #include <exec/types.h>
 #include <exec/resident.h>
 #include <exec/libraries.h>
@@ -33,11 +35,11 @@ int start(void) { return -1; }
 
 static const char lib_name[] = OPENCRYPTOLIB_NAME;
 static const char lib_id[] =
-    "gfopencrypto.library 2.1 (20.10.2026) GFOpenCrypto, AmiCradle Team\r\n";
+    "gfopencrypto.library 2.2 (6.11.2026) GFOpenCrypto, AmiCradle Team\r\n";
 /* For Version FILE and the Installer: without it, Version only finds the
  * library's version once it is in memory. */
 static const char lib_ver[] __attribute__((used)) =
-    "$VER: gfopencrypto.library 2.1 (20.10.2026) GFOpenCrypto, AmiCradle Team";
+    "$VER: gfopencrypto.library 2.2 (6.11.2026) GFOpenCrypto, AmiCradle Team";
 
 static struct Library *lib_init(REG(d0, struct OpenCryptoLibBase *base),
                                 REG(a0, BPTR seglist),
@@ -72,6 +74,8 @@ DECL(OC_AES, struct OCAESRequest);
 DECL(OC_RSAPublic, struct OCRSARequest);
 DECL(OC_ECDSAVerify, struct OCECDSARequest);
 DECL(OC_RSAPSSVerify, struct OCRSAPSSRequest);
+static void OC_SHA1(REG(a0, struct OCBufferHash *r), REG(a6, struct OpenCryptoLibBase *base));
+DECL(OC_SHA1Blocks, struct OCBlocksRequest);
 
 static const APTR lib_vectors[] = {
     (APTR)lib_open, (APTR)lib_close, (APTR)lib_expunge, (APTR)lib_null,
@@ -85,6 +89,7 @@ static const APTR lib_vectors[] = {
     (APTR)OC_SHA256Blocks, (APTR)OC_SHA512Blocks, (APTR)OC_ChaCha20, (APTR)OC_Poly1305,
     (APTR)OC_AES, (APTR)OC_RSAPublic, (APTR)OC_ECDSAVerify,
     (APTR)OC_RSAPSSVerify,
+    (APTR)OC_SHA1, (APTR)OC_SHA1Blocks,
     (APTR)-1
 };
 
@@ -370,4 +375,22 @@ DECL(OC_RSAPSSVerify, struct OCRSAPSSRequest)
     if (ocm_rsa_public(em, sig, n, len, r->e, r->e_length)) return 0;
     for (bits = 8 * len; !(n[0] & (0x80 >> (8 * len - bits))); --bits) {}
     return oc_emsa_pss_verify(em, len, bits, r->hash, r->hash_length, r->salt_length, h);
+}
+
+/* ---- version 2, revision 2 ---- */
+
+static void OC_SHA1(REG(a0, struct OCBufferHash *r), REG(a6, struct OpenCryptoLibBase *base))
+{
+    (void)base;
+    if (r && r->out && (r->data || !r->length))
+        oc_sha1(r->data, r->length, r->out);
+}
+
+DECL(OC_SHA1Blocks, struct OCBlocksRequest)
+{
+    (void)base;
+    if (!r || !r->state || (!r->data && r->blocks)) return OCERR_ARGS;
+    if (r->blocks)
+        oc_sha1_blocks(r->state, r->data, r->blocks);
+    return 0;
 }
