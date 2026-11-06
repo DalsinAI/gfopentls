@@ -21,23 +21,20 @@ typedef int32_t fe[10];
 /* the product's columns back to limbs within 2^25 / 2^24 of zero: carries
  * rounded to nearest, the one out of the top limb coming back as 19 times
  * itself */
+#define CARRY26(i) do { c = (t[i] + ((int64_t)1 << 25)) >> 26; t[(i) + 1] += c; t[i] -= c * ((int64_t)1 << 26); } while (0)
+#define CARRY25(i) do { c = (t[i] + ((int64_t)1 << 24)) >> 25; t[(i) + 1] += c; t[i] -= c * ((int64_t)1 << 25); } while (0)
 static void fe_carry(fe h, int64_t t[10])
 {
     int64_t c;
-    int i;
-    for (i = 0; i < 9; ++i) {
-        int s = (i & 1) ? 25 : 26;
-        c = (t[i] + ((int64_t)1 << (s - 1))) >> s;
-        t[i + 1] += c;
-        t[i] -= c * ((int64_t)1 << s);
-    }
+    CARRY26(0); CARRY25(1); CARRY26(2); CARRY25(3); CARRY26(4);
+    CARRY25(5); CARRY26(6); CARRY25(7); CARRY26(8);
     c = (t[9] + ((int64_t)1 << 24)) >> 25;
     t[0] += c * 19;
     t[9] -= c * ((int64_t)1 << 25);
-    c = (t[0] + ((int64_t)1 << 25)) >> 26;
-    t[1] += c;
-    t[0] -= c * ((int64_t)1 << 26);
-    for (i = 0; i < 10; ++i) h[i] = (int32_t)t[i];
+    CARRY26(0);
+    h[0] = (int32_t)t[0]; h[1] = (int32_t)t[1]; h[2] = (int32_t)t[2]; h[3] = (int32_t)t[3];
+    h[4] = (int32_t)t[4]; h[5] = (int32_t)t[5]; h[6] = (int32_t)t[6]; h[7] = (int32_t)t[7];
+    h[8] = (int32_t)t[8]; h[9] = (int32_t)t[9];
 }
 
 static void fe_mul(fe h, const fe f, const fe g)

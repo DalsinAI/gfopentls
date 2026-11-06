@@ -153,6 +153,16 @@ int oc_ecdsa_verify(int curve, const uint8_t *qx, const uint8_t *qy,
                     const uint8_t *r, const uint8_t *s,
                     const uint8_t *hash, size_t hash_length);
 
+/* ECDH on P-256, P-384 and P-521 (curve = 256, 384, 521), constant time:
+ * oc_ec_mul() sets point (X9.62 uncompressed, 04 || x || y, 1 + 2 bytes
+ * of the curve's size) to scalar . point, after checking the point is on
+ * the curve; 1, or 0 for a bad point, curve or result. oc_ec_mulgen()
+ * writes scalar . G there and returns its length (0 on failure). The
+ * scalar is big-endian, any length. */
+int oc_ec_mul(int curve, uint8_t *point, size_t point_length,
+              const uint8_t *scalar, size_t scalar_length);
+int oc_ec_mulgen(int curve, uint8_t *point, const uint8_t *scalar, size_t scalar_length);
+
 /* RSASSA-PSS verification (RFC 8017 section 8.1.2), as TLS 1.3 uses it
  * (rsa_pss_rsae_*): MGF1 with the message's own hash, which hash_length
  * names (32 SHA-256, 48 SHA-384, 64 SHA-512). salt_length is the salt's

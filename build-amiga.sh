@@ -26,7 +26,7 @@ case "${CPU:-040}" in
 esac
 SRC="$HERE/src/opencrypto_sha256.c $HERE/src/opencrypto_sha512.c $HERE/src/opencrypto_sha1.c
      $HERE/src/opencrypto_x25519.c $HERE/src/opencrypto_ed25519.c
-     $HERE/src/opencrypto_sntrup761.c $HERE/src/opencrypto_chacha20.c $HERE/src/opencrypto_ghash.c
+     $HERE/src/opencrypto_sntrup761.c $HERE/src/opencrypto_chacha20.c $HERE/src/opencrypto_ghash.c $HERE/src/opencrypto_ecdh.c
      $HERE/src/opencrypto_aes.c $HERE/src/opencrypto_pubkey.c $HERE/src/opencrypto_pss.c"
 
 mkdir -p "$OUT/include/gfopencrypto" "$OUT/include/libraries" \
