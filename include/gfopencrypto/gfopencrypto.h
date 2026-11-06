@@ -120,6 +120,9 @@ void oc_sntrup761_dec(uint8_t ss[OC_SNTRUP761_SS_BYTES], const uint8_t ct[OC_SNT
 void oc_chacha20_xor(uint8_t *out, const uint8_t *in, size_t length,
                      const uint8_t key[32], const uint8_t nonce[8], uint64_t counter);
 void oc_poly1305(uint8_t tag[16], const void *data, size_t length, const uint8_t key[32]);
+/* GHASH (NIST SP 800-38D 6.4), AES-GCM's hash: y = (y + X_i) . h for each
+ * 16-byte part of the data (the last padded with zeros), constant time */
+void oc_ghash(uint8_t y[16], const uint8_t h[16], const void *data, size_t length);
 /* length bytes from a seed: ChaCha20's key stream, the label as nonce */
 void oc_expand_seed(uint8_t *out, size_t length, const uint8_t seed[OC_SEED_BYTES],
                     const char label[8]);

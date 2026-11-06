@@ -168,11 +168,32 @@ int main(void)
         || !oc_ct_equal(got, want, 42))
         return 10;
 
+    /* AES-GCM from oc_aes and oc_ghash: the GCM paper's (McGrew and Viega,
+     * 2005) test case 2: key, IV and plaintext all zeros */
+    {
+        uint8_t key[16] = { 0 }, j0[16] = { 0 }, h[16] = { 0 }, y[16] = { 0 };
+        uint8_t c[16] = { 0 }, s[16] = { 0 }, lens[16] = { 0 };
+        int i;
+        oc_aes(h, 16, key, 16, j0, OC_AES_ECB_ENCRYPT);      /* H = E(K, 0) */
+        j0[15] = 2;
+        oc_aes(c, 16, key, 16, j0, OC_AES_CTR);              /* C = P + E(K, inc32(J0)) */
+        if (!hex(want, 16, "0388dace60b6a392f328c2b971b2fe78") || !oc_ct_equal(c, want, 16))
+            return 15;
+        lens[15] = 0x80;                                     /* len(A) 0, len(C) 128 bits */
+        oc_ghash(y, h, c, 16);
+        oc_ghash(y, h, lens, 16);
+        j0[15] = 1;
+        oc_aes(s, 16, key, 16, j0, OC_AES_CTR);              /* T = E(K, J0) + GHASH */
+        for (i = 0; i < 16; ++i) s[i] ^= y[i];
+        if (!hex(want, 16, "ab6e47d42cec13bdf53a67b21257bddf") || !oc_ct_equal(s, want, 16))
+            return 16;
+    }
+
     got[0] = 0xaa;
     oc_cleanse(got, sizeof got);
     for (size_t i = 0; i < sizeof got; ++i)
         if (got[i]) return 11;
 
-    puts("OPENCRYPTO PASS sha1 sha256 sha384 sha512 hmac hkdf ct-cleanse");
+    puts("OPENCRYPTO PASS sha1 sha256 sha384 sha512 hmac hkdf aes-gcm ct-cleanse");
     return 0;
 }
