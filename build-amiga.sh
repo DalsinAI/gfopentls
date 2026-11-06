@@ -9,7 +9,12 @@
 # Outputs: lib/gfopencrypto.library, tests/GFOpenCryptoLibTest (version 1's
 # calls), tests/GFOpenCryptoVectors (the published vectors, as on the PC),
 # tests/GFOpenCryptoKeyVectors (2.4's additions against published vectors,
-# timed), tests/GFOpenCryptoBench (version 2's calls, checked and timed).
+# timed), tests/GFOpenCryptoBench (version 2's calls, checked and timed),
+# the link stubs lib/libgfopencrypto.a (the oc_* calls through
+# gfopencrypto.library 2.4) and lib/libgfopentls.a (opens gfopentls.library
+# 1.5 into OpenTLSBase), the same again in lib/soft-float/ (they hold no
+# floating point at all, checked), and tests/GFOpenStubTest (a program
+# linked with the two stubs alone).
 # MIT, Copyright (c) 2026 AmiCradle Team.
 set -eu
 
@@ -65,11 +70,35 @@ echo "$OUT/lib/gfopencrypto.library ($(wc -c < "$OUT/lib/gfopencrypto.library") 
 "$CC" $CFLAGS -noixemul -I"$HERE/tests" -o "$OUT/tests/GFOpenCryptoBench" "$HERE/tests/bench_library.c" \
   "$HERE/src/opencrypto_sha256.c"
 
+# the link stubs: -Os, no floating point (checked), the same archives for
+# programs built with and without an FPU
+AR="$P/bin/m68k-amigaos-ar"
+SO="$OUT/obj/stub"
+mkdir -p "$SO" "$OUT/lib/soft-float"
+for f in stub_open gfopencrypto_stub stub_pss stub_keccak stub_blake2b gfopentls_stub; do
+    "$CC" $CPUFLAGS -Os -fno-delete-null-pointer-checks -fomit-frame-pointer -Wall -Wextra -Werror \
+      -Wno-unused-parameter -noixemul -I"$HERE/include" -c "$HERE/stub/$f.c" -o "$SO/$f.o"
+done
+rm -f "$OUT/lib/libgfopencrypto.a" "$OUT/lib/libgfopentls.a"
+"$AR" rcs "$OUT/lib/libgfopencrypto.a" "$SO/gfopencrypto_stub.o" "$SO/stub_open.o" \
+  "$SO/stub_pss.o" "$SO/stub_keccak.o" "$SO/stub_blake2b.o"
+"$AR" rcs "$OUT/lib/libgfopentls.a" "$SO/gfopentls_stub.o" "$SO/stub_open.o"
+if "$P/bin/m68k-amigaos-objdump" -d "$OUT/lib/libgfopencrypto.a" "$OUT/lib/libgfopentls.a" \
+     | awk -F'\t' '$3 ~ /^f/' | grep .; then
+    echo "FPU check: the link stubs hold FPU instructions"; exit 1
+fi
+echo "FPU check: link stubs, no floating point"
+cp "$OUT/lib/libgfopencrypto.a" "$OUT/lib/libgfopentls.a" "$OUT/lib/soft-float/"
+"$CC" $CPUFLAGS -Os -Wall -Wextra -Werror -Wno-unused-parameter -Wno-format -noixemul -I"$HERE/include" \
+  -o "$OUT/tests/GFOpenStubTest" "$HERE/tests/test_stubs_amiga.c" -L"$OUT/lib" -lgfopencrypto -lgfopentls
+echo "$OUT/lib/libgfopencrypto.a ($(wc -c < "$OUT/lib/libgfopencrypto.a") bytes)"
+echo "$OUT/lib/libgfopentls.a ($(wc -c < "$OUT/lib/libgfopentls.a") bytes)"
+
 if [ -n "${FPCR_CHECK:-}" ]; then
     python3 "$FPCR_CHECK" "$P/bin/m68k-amigaos-objdump" "$OUT/lib/gfopencrypto.library" \
         "$OUT/tests/GFOpenCryptoVectors" "$OUT/tests/GFOpenCryptoKeyVectors" "$OUT/tests/GFOpenCryptoBench"
 fi
-for f in GFOpenCryptoLibTest GFOpenCryptoVectors GFOpenCryptoKeyVectors GFOpenCryptoBench; do
+for f in GFOpenCryptoLibTest GFOpenCryptoVectors GFOpenCryptoKeyVectors GFOpenCryptoBench GFOpenStubTest; do
     echo "$OUT/tests/$f ($(wc -c < "$OUT/tests/$f") bytes)"
 done
 sha256sum "$OUT/lib/gfopencrypto.library"
