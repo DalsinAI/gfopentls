@@ -236,6 +236,14 @@ How the server's certificate is checked:
   is unknown; a program using this must say so to its user.
 - `OTV_PINNED_ONLY`: only the certificate given to `OT_PinCertificate()`
   is accepted (as SSH's known hosts); any other gives `OTERR_PINNED`.
+- `OTV_REPORT` (revision 5): the handshake goes on as with `OTV_NONE`,
+  and `OT_GetVerifyResult()` then answers what `OTV_FULL` would have
+  said. For a program that shows its user the certificate and asks
+  (FileZilla's "unknown certificate" dialog): read the result and the
+  chain, and close the connection before sending anything if the user
+  says no. A pinned certificate (`OT_PinCertificate()`) answers
+  `OTERR_OK`. Check the revision (at least 5) before asking for it; an
+  older library answers `OTERR_ARGS`.
 
 Before the handshake only.
 
@@ -481,3 +489,117 @@ was freed first), and for NULL. A cache can use it to keep only sessions
 that resume, or to take a session again later. Safe from any task while
 the connection is in use. Check the revision (`OT_Version() & 0xFFFF` at
 least 3) before calling it.
+
+## OT_GetVerifyResult (version 1, revision 5)
+
+    result = OT_GetVerifyResult(connection)
+    D0                          A0
+
+    LONG OT_GetVerifyResult(struct OTConnection *connection);
+
+With `OTV_REPORT`, what the full check (`OTV_FULL`: chain to a trusted
+CA, dates, host name) said of the server's certificate:
+`OTERR_OK`, `OTERR_UNTRUSTED`, `OTERR_TRUSTSTORE` (no trust store could be
+read), `OTERR_HOSTNAME`, `OTERR_EXPIRED` (also not yet valid),
+`OTERR_BADCERT` or, with `OT_PinCertificate()` and `OTV_PINNED_ONLY`,
+`OTERR_PINNED`. A pinned certificate gives `OTERR_OK`. `OTERR_STATE`
+before a certificate was seen, and on a resumed connection (the server
+sends no certificate then: keep what the first connection said). Meant
+for `OTV_REPORT`; with the other modes it agrees with the handshake's
+own answer.
+
+## OT_GetPeerChainLength, OT_GetPeerCertificateN (version 1, revision 5)
+
+    count = OT_GetPeerChainLength(connection)
+    D0                            A0
+
+    length = OT_GetPeerCertificateN(connection, index, buffer, length)
+    D0                              A0          D0     A1      D1
+
+    LONG OT_GetPeerChainLength(struct OTConnection *connection);
+    LONG OT_GetPeerCertificateN(struct OTConnection *connection, LONG index,
+                                APTR buffer, LONG length);
+
+The certificates the server sent, in its order: index 0 is its own (the
+one `OT_GetPeerCertificate()` gives), then each issuer it sent. Up to 10
+certificates and 64 KB in all are kept; anything past that is left out of
+the count. `OT_GetPeerCertificateN()` copies one (DER) into `buffer` and
+answers its length; with `buffer` NULL, the length only; a buffer too
+small or an index past the end gives `OTERR_ARGS`. `OTERR_STATE` before a
+certificate was seen and on a resumed connection. Available after a
+handshake that failed on the certificate too.
+
+## OT_GetKeyExchange, OT_GetMAC (version 1, revision 5)
+
+    group = OT_GetKeyExchange(connection)
+    D0                        A0
+
+    mac = OT_GetMAC(connection)
+    D0              A0
+
+    CONST_STRPTR OT_GetKeyExchange(struct OTConnection *connection);
+    CONST_STRPTR OT_GetMAC(struct OTConnection *connection);
+
+For a program's "connection details". The key exchange: "x25519",
+"secp256r1", "secp384r1", "secp521r1", or "RSA" (TLS 1.2 RSA key
+transport). The MAC: "AEAD" for GCM and ChaCha20-Poly1305 (every TLS 1.3
+suite), else "SHA1", "SHA256" or "SHA384" (TLS 1.2 CBC suites). "" before
+the handshake; the key exchange can be "" on a resumed TLS 1.2
+connection, which runs none. The strings are constant.
+
+## OT_CertInfo (version 1, revision 5)
+
+    result = OT_CertInfo(der, length, info)
+    D0                   A0   D0      A1
+
+    LONG OT_CertInfo(CONST_APTR der, LONG length, struct OTCertInfo *info);
+
+Reads a DER certificate's fields into `info` (set `info->Size` to
+`sizeof(struct OTCertInfo)` first). Reading only: nothing here says
+whether to trust it. Any certificate will do: one from
+`OT_GetPeerCertificateN()`, or one from a file.
+
+- `Subject`, `Issuer`: RFC 4514 strings, last RDN first
+  ("CN=ftp.example.org,O=Example,C=GB"), UTF-8, with `\` before the
+  characters RFC 4514 escapes. Known types are named (CN, L, ST, O, OU, C,
+  STREET, serialNumber, GN, SN, title, organizationIdentifier, DC, UID,
+  EMAIL); others are the dotted OID with the value as `#` and hex DER.
+  The members of a multi-valued RDN keep their DER order. Cut short at
+  511 bytes.
+- `NotBefore`, `NotAfter`: UTC (`struct OTCertTime`: Year, Month 1-12,
+  Day, Hour, Minute, Second).
+- `Serial`, `SerialLength`: big-endian, without the sign byte (the first
+  32 bytes of a longer one; RFC 5280 allows 20).
+- `Version`: 1 to 3.
+- `KeyAlgorithm`, `KeyBits`, `KeyCurve`: "RSA", "RSA-PSS", "ECDSA" (with
+  `KeyCurve` "secp256r1", "secp384r1", "secp521r1" or an OID), "Ed25519",
+  "Ed448", "DSA", or the OID; `KeyBits` the modulus or curve size.
+- `SignatureAlgorithm`: "RSA-SHA256", "RSA-SHA384", "RSA-SHA512",
+  "RSA-SHA1", "RSA-SHA224", "RSA-MD5", "RSA-PSS", "ECDSA-SHA1" ...
+  "ECDSA-SHA512", "Ed25519", "Ed448", "DSA-SHA1", "DSA-SHA256" or the OID.
+- `SelfSigned`: 1 when the issuer name is the subject name (as GnuTLS
+  and OpenSSL decide it; the signature is not checked).
+- `AltNameCount`: how many subject alternative names `OT_CertAltName()`
+  can read.
+- `SHA256`, `SHA1`: fingerprints of the whole DER.
+
+Answers `OTERR_OK`, `OTERR_ARGS` (NULL, a length of 0 or less, a `Size`
+too small) or `OTERR_BADCERT` (not a certificate, or cut short).
+
+## OT_CertAltName (version 1, revision 5)
+
+    kind = OT_CertAltName(der, length, index, buffer, size)
+    D0                    A0   D0      D1     A1      D2
+
+    LONG OT_CertAltName(CONST_APTR der, LONG length, LONG index,
+                        STRPTR buffer, LONG size);
+
+The `index`-th subject alternative name (from 0) into `buffer` as a
+NUL-terminated string, cut short to fit `size`. Answers its kind:
+`OT_ALT_DNS`, `OT_ALT_IP` ("192.0.2.1", or IPv6 as RFC 5952 writes it:
+"2001:db8::1"), `OT_ALT_EMAIL` or `OT_ALT_URI`; 0 past the last one (or
+when there is no such extension); `OTERR_ARGS` for NULL or a size below 1.
+Other kinds of name are skipped.
+
+    for (i = 0; (kind = OT_CertAltName(der, len, i, name, sizeof name)) > 0; ++i)
+        ...

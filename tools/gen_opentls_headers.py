@@ -45,6 +45,14 @@ CALLS = [
     # version 1, revision 3 (additive)
     ("OT_SetVersion", "LONG", [(X, "connection", "a0"), ("LONG", "minVersion", "d0"), ("LONG", "maxVersion", "d1")]),
     ("OT_SessionHasTicket", "LONG", [(S, "session", "a0")]),
+    # version 1, revision 5 (additive): what a program shows its user of a peer
+    ("OT_GetVerifyResult", "LONG", [(X, "connection", "a0")]),
+    ("OT_GetPeerChainLength", "LONG", [(X, "connection", "a0")]),
+    ("OT_GetPeerCertificateN", "LONG", [(X, "connection", "a0"), ("LONG", "index", "d0"), ("APTR", "buffer", "a1"), ("LONG", "length", "d1")]),
+    ("OT_GetKeyExchange", "CONST_STRPTR", [(X, "connection", "a0")]),
+    ("OT_GetMAC", "CONST_STRPTR", [(X, "connection", "a0")]),
+    ("OT_CertInfo", "LONG", [("CONST_APTR", "der", "a0"), ("LONG", "length", "d0"), ("struct OTCertInfo *", "info", "a1")]),
+    ("OT_CertAltName", "LONG", [("CONST_APTR", "der", "a0"), ("LONG", "length", "d0"), ("LONG", "index", "d1"), ("STRPTR", "buffer", "a1"), ("LONG", "size", "d2")]),
 ]
 BIAS = 30
 

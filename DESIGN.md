@@ -433,3 +433,41 @@ FileZilla stops offering them.
   bits, and RSA private operations from 1024 to 4096 bits.
   `tests/test_library.c` calls each new library entry.
 
+## 14. GFOpenTLS 1.5: what FileZilla shows of a server (6 November 2026)
+
+FileZilla asks its user about a certificate it cannot trust and shows
+the chain, names, dates and connection details; it had all of that from
+GnuTLS. Revision 5 adds it to GFOpenTLS, client side only.
+
+- **`OTV_REPORT`.** The X.509 wrapper (`ot_x509.c`) runs the full check
+  (`full_checks`: BearSSL's chain and date check, then the host name or
+  address as for `OTV_FULL`) and keeps its answer in `x509.verdict`
+  instead of failing the handshake; the leaf's key is handed on as with
+  `OTV_NONE`. `OT_GetVerifyResult()` turns the verdict into an `OTERR_`
+  code. A pinned certificate is verdict 0 in every mode. The other modes
+  keep their verdict too, so the call agrees with the handshake there.
+- **The chain.** `xw_start_cert` and `xw_append` copy each certificate
+  as BearSSL's engine (TLS 1.2) or our TLS 1.3 client feeds it into one
+  growing buffer (8 KB, doubled as needed, at most 64 KB and 10
+  certificates, freed with the connection). Only whole certificates are
+  counted. A resumed connection has none.
+- **Fields.** `OT_CertInfo()` walks the DER with the same small reader
+  the name checks use (`der_next`, `leaf_parse`, `der_san`); names are
+  written as RFC 4514 says (section 2.4 escapes, `#hex` for unknown
+  types, BMPString and UniversalString to UTF-8, T61String as Latin-1),
+  times from UTCTime or GeneralizedTime, fingerprints with BearSSL's
+  SHA-1 and SHA-256 (through GFOpenCrypto). IPv6 alternative names follow
+  RFC 5952.
+- **Key exchange and MAC.** TLS 1.3: our client's group (x25519 or
+  P-256 after a HelloRetryRequest). TLS 1.2: BearSSL's ECDHE curve, or
+  "RSA" for RSA key transport; the MAC from the suite's name.
+- **Tests.** `tests/test_cert_fields.py` makes certificates with
+  awkward names (escapes, UTF-8, a multi-valued RDN, an unknown OID),
+  long and high-bit serials, dates past 2049, RSA 3072, RSA-PSS, P-256,
+  P-384, P-521 and Ed25519 keys and every kind of alternative name, and
+  holds each field to the openssl command's; cut and rubbish input gives
+  `OTERR_BADCERT`. `tests/test_tls_local.py` adds `OTV_REPORT` cases for
+  a good chain, self-signed, wrong name, wrong address, expired, pinned,
+  Ed25519, P-256/P-384 and RSA key exchange, and a resumed connection.
+- **Size.** gfopentls.library 120,816 bytes to 130,916 (GCC 16, 68040).
+

@@ -118,4 +118,25 @@ LONG __OT_SetVersion(__reg("a6") struct Library *, __reg("a0") struct OTConnecti
 LONG __OT_SessionHasTicket(__reg("a6") struct Library *, __reg("a0") struct OTSession *session) = "\tjsr\t-234(a6)";
 #define OT_SessionHasTicket(session) __OT_SessionHasTicket(OPENTLS_BASE_NAME, (session))
 
+LONG __OT_GetVerifyResult(__reg("a6") struct Library *, __reg("a0") struct OTConnection *connection) = "\tjsr\t-240(a6)";
+#define OT_GetVerifyResult(connection) __OT_GetVerifyResult(OPENTLS_BASE_NAME, (connection))
+
+LONG __OT_GetPeerChainLength(__reg("a6") struct Library *, __reg("a0") struct OTConnection *connection) = "\tjsr\t-246(a6)";
+#define OT_GetPeerChainLength(connection) __OT_GetPeerChainLength(OPENTLS_BASE_NAME, (connection))
+
+LONG __OT_GetPeerCertificateN(__reg("a6") struct Library *, __reg("a0") struct OTConnection *connection, __reg("d0") LONG index, __reg("a1") APTR buffer, __reg("d1") LONG length) = "\tjsr\t-252(a6)";
+#define OT_GetPeerCertificateN(connection, index, buffer, length) __OT_GetPeerCertificateN(OPENTLS_BASE_NAME, (connection), (index), (buffer), (length))
+
+CONST_STRPTR __OT_GetKeyExchange(__reg("a6") struct Library *, __reg("a0") struct OTConnection *connection) = "\tjsr\t-258(a6)";
+#define OT_GetKeyExchange(connection) __OT_GetKeyExchange(OPENTLS_BASE_NAME, (connection))
+
+CONST_STRPTR __OT_GetMAC(__reg("a6") struct Library *, __reg("a0") struct OTConnection *connection) = "\tjsr\t-264(a6)";
+#define OT_GetMAC(connection) __OT_GetMAC(OPENTLS_BASE_NAME, (connection))
+
+LONG __OT_CertInfo(__reg("a6") struct Library *, __reg("a0") CONST_APTR der, __reg("d0") LONG length, __reg("a1") struct OTCertInfo *info) = "\tjsr\t-270(a6)";
+#define OT_CertInfo(der, length, info) __OT_CertInfo(OPENTLS_BASE_NAME, (der), (length), (info))
+
+LONG __OT_CertAltName(__reg("a6") struct Library *, __reg("a0") CONST_APTR der, __reg("d0") LONG length, __reg("d1") LONG index, __reg("a1") STRPTR buffer, __reg("d2") LONG size) = "\tjsr\t-276(a6)";
+#define OT_CertAltName(der, length, index, buffer, size) __OT_CertAltName(OPENTLS_BASE_NAME, (der), (length), (index), (buffer), (size))
+
 #endif

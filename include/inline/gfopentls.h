@@ -115,4 +115,25 @@
 #define OT_SessionHasTicket(session) \
 	LP1(0xea, LONG, OT_SessionHasTicket, struct OTSession *, session, a0, , OPENTLS_BASE_NAME)
 
+#define OT_GetVerifyResult(connection) \
+	LP1(0xf0, LONG, OT_GetVerifyResult, struct OTConnection *, connection, a0, , OPENTLS_BASE_NAME)
+
+#define OT_GetPeerChainLength(connection) \
+	LP1(0xf6, LONG, OT_GetPeerChainLength, struct OTConnection *, connection, a0, , OPENTLS_BASE_NAME)
+
+#define OT_GetPeerCertificateN(connection, index, buffer, length) \
+	LP4(0xfc, LONG, OT_GetPeerCertificateN, struct OTConnection *, connection, a0, LONG, index, d0, APTR, buffer, a1, LONG, length, d1, , OPENTLS_BASE_NAME)
+
+#define OT_GetKeyExchange(connection) \
+	LP1(0x102, CONST_STRPTR, OT_GetKeyExchange, struct OTConnection *, connection, a0, , OPENTLS_BASE_NAME)
+
+#define OT_GetMAC(connection) \
+	LP1(0x108, CONST_STRPTR, OT_GetMAC, struct OTConnection *, connection, a0, , OPENTLS_BASE_NAME)
+
+#define OT_CertInfo(der, length, info) \
+	LP3(0x10e, LONG, OT_CertInfo, CONST_APTR, der, a0, LONG, length, d0, struct OTCertInfo *, info, a1, , OPENTLS_BASE_NAME)
+
+#define OT_CertAltName(der, length, index, buffer, size) \
+	LP5(0x114, LONG, OT_CertAltName, CONST_APTR, der, a0, LONG, length, d0, LONG, index, d1, STRPTR, buffer, a1, LONG, size, d2, , OPENTLS_BASE_NAME)
+
 #endif
