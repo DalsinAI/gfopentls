@@ -9,6 +9,9 @@ static uint64_t rotr64(uint64_t x, unsigned n)
 
 static uint64_t load_be64(const uint8_t *p)
 {
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    if (!((uintptr_t)p & 1)) return *(const uint64_t *)(const void *)p;   /* the 68k: two moves */
+#endif
     return ((uint64_t)p[0] << 56) |
            ((uint64_t)p[1] << 48) |
            ((uint64_t)p[2] << 40) |
@@ -90,15 +93,24 @@ static void sha512_transform(OCSHA512 *ctx, const uint8_t block[128])
     a=ctx->h[0]; b=ctx->h[1]; c=ctx->h[2]; d=ctx->h[3];
     e=ctx->h[4]; f=ctx->h[5]; g=ctx->h[6]; h=ctx->h[7];
 
-    for (i = 0; i < 80; ++i) {
-        uint64_t S1 = rotr64(e,14) ^ rotr64(e,18) ^ rotr64(e,41);
-        uint64_t ch = (e & f) ^ ((~e) & g);
-        uint64_t t1 = h + S1 + ch + k[i] + w[i];
-        uint64_t S0 = rotr64(a,28) ^ rotr64(a,34) ^ rotr64(a,39);
-        uint64_t maj = (a & b) ^ (a & c) ^ (b & c);
-        uint64_t t2 = S0 + maj;
-        h=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2;
+    /* eight rounds a pass, the working words renamed rather than moved */
+#define RND(a, b, c, d, e, f, g, h, j) do { \
+        uint64_t t1_ = (h) + (rotr64(e, 14) ^ rotr64(e, 18) ^ rotr64(e, 41)) \
+                     + ((((f) ^ (g)) & (e)) ^ (g)) + k[i + (j)] + w[i + (j)]; \
+        (d) += t1_; \
+        (h) = t1_ + (rotr64(a, 28) ^ rotr64(a, 34) ^ rotr64(a, 39)) \
+            + (((a) & (b)) | (((a) | (b)) & (c))); } while (0)
+    for (i = 0; i < 80; i += 8) {
+        RND(a, b, c, d, e, f, g, h, 0);
+        RND(h, a, b, c, d, e, f, g, 1);
+        RND(g, h, a, b, c, d, e, f, 2);
+        RND(f, g, h, a, b, c, d, e, 3);
+        RND(e, f, g, h, a, b, c, d, 4);
+        RND(d, e, f, g, h, a, b, c, 5);
+        RND(c, d, e, f, g, h, a, b, 6);
+        RND(b, c, d, e, f, g, h, a, 7);
     }
+#undef RND
 
     ctx->h[0]+=a; ctx->h[1]+=b; ctx->h[2]+=c; ctx->h[3]+=d;
     ctx->h[4]+=e; ctx->h[5]+=f; ctx->h[6]+=g; ctx->h[7]+=h;
@@ -128,7 +140,14 @@ static void sha512_update(OCSHA512 *ctx, const void *data, size_t length)
     const uint8_t *p = (const uint8_t *)data;
     ctx->total_bytes += (uint64_t)length;
     while (length) {
-        size_t n = 128 - ctx->block_used;
+        size_t n;
+        if (!ctx->block_used && length >= 128) {    /* whole blocks: no copy */
+            sha512_transform(ctx, p);
+            p += 128;
+            length -= 128;
+            continue;
+        }
+        n = 128 - ctx->block_used;
         if (n > length) n = length;
         memcpy(ctx->block + ctx->block_used, p, n);
         ctx->block_used += n;
