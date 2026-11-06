@@ -69,6 +69,15 @@ the protocol (TLS 1.0 to 1.2, X.509 parsing). The library is 69 KB
 smaller, and each operation at least as fast as BearSSL's on a 68040.
 DESIGN.md section 12 has the figures.
 
+`gfopentls.library` 1.5 (6 November 2026), for FileZilla: `OTV_REPORT`
+(connect, then `OT_GetVerifyResult()` says what the full check found, so
+a program can ask its user), the server's whole chain
+(`OT_GetPeerChainLength()`, `OT_GetPeerCertificateN()`), certificate
+fields (`OT_CertInfo()`: RFC 4514 names, dates, serial, key, signature
+algorithm, self-signed, fingerprints; `OT_CertAltName()`), and the key
+exchange and MAC names (`OT_GetKeyExchange()`, `OT_GetMAC()`). Client
+only, as before. DESIGN.md section 14.
+
 ## Building and testing
 
     cmake -S . -B build && cmake --build build && ctest --test-dir build

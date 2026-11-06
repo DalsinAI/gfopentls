@@ -71,3 +71,17 @@ static LONG LIB_OT_SetVersion(REG(a0, struct OTConnection *connection), REG(d0, 
 { (void)base; return OT_SetVersion(connection, minVersion, maxVersion); }
 static LONG LIB_OT_SessionHasTicket(REG(a0, struct OTSession *session), REG(a6, struct Library *base))
 { (void)base; return OT_SessionHasTicket(session); }
+static LONG LIB_OT_GetVerifyResult(REG(a0, struct OTConnection *connection), REG(a6, struct Library *base))
+{ (void)base; return OT_GetVerifyResult(connection); }
+static LONG LIB_OT_GetPeerChainLength(REG(a0, struct OTConnection *connection), REG(a6, struct Library *base))
+{ (void)base; return OT_GetPeerChainLength(connection); }
+static LONG LIB_OT_GetPeerCertificateN(REG(a0, struct OTConnection *connection), REG(d0, LONG index), REG(a1, APTR buffer), REG(d1, LONG length), REG(a6, struct Library *base))
+{ (void)base; return OT_GetPeerCertificateN(connection, index, buffer, length); }
+static CONST_STRPTR LIB_OT_GetKeyExchange(REG(a0, struct OTConnection *connection), REG(a6, struct Library *base))
+{ (void)base; return OT_GetKeyExchange(connection); }
+static CONST_STRPTR LIB_OT_GetMAC(REG(a0, struct OTConnection *connection), REG(a6, struct Library *base))
+{ (void)base; return OT_GetMAC(connection); }
+static LONG LIB_OT_CertInfo(REG(a0, CONST_APTR der), REG(d0, LONG length), REG(a1, struct OTCertInfo *info), REG(a6, struct Library *base))
+{ (void)base; return OT_CertInfo(der, length, info); }
+static LONG LIB_OT_CertAltName(REG(a0, CONST_APTR der), REG(d0, LONG length), REG(d1, LONG index), REG(a1, STRPTR buffer), REG(d2, LONG size), REG(a6, struct Library *base))
+{ (void)base; return OT_CertAltName(der, length, index, buffer, size); }

@@ -16,15 +16,18 @@
 #include "bearssl.h"
 
 #define OT_LIB_VERSION   1
-#define OT_LIB_REVISION  4          /* 1.1: OT_GetPeerName; 1.2: S:GFOpenTLS/ca-bundle.pem, ENVARC:GFOpenTLS/certs/;
+#define OT_LIB_REVISION  5          /* 1.1: OT_GetPeerName; 1.2: S:GFOpenTLS/ca-bundle.pem, ENVARC:GFOpenTLS/certs/;
                                        1.3: TLS 1.3, OT_SetVersion, OT_SessionHasTicket;
-                                       1.4: all maths in gfopencrypto.library 2.3, none of BearSSL's */
+                                       1.4: all maths in gfopencrypto.library 2.3, none of BearSSL's;
+                                       1.5: OTV_REPORT, the whole chain, certificate fields, group and MAC names */
 
 #define OT_HOST_MAX      255
 #define OT_ALPN_MAX      8          /* protocols offered at once */
 #define OT_TEXT_MAX      200
 #define OT_LEAF_MAX      16384      /* the server's certificate kept for the caller */
 #define OT_OUT_MAX       4096       /* small records gathered into one send */
+#define OT_CHAIN_MAX     10         /* certificates kept from the server's chain */
+#define OT_CHAIN_BYTES   65536      /* and their bytes together */
 
 /* Our own engine error codes, past BearSSL's X.509 range (32..63). */
 #define OT_X509_PINNED     70       /* OTV_PINNED_ONLY and not the pin */
@@ -132,6 +135,12 @@ struct ot_x509 {
     size_t leaf_len, leaf_cap;
     unsigned char fingerprint[32];
     int have_fingerprint;
+    unsigned char *chain;            /* the server's certificates, one after another */
+    size_t chain_len, chain_cap;
+    size_t chain_off[OT_CHAIN_MAX], chain_end[OT_CHAIN_MAX], chain_want[OT_CHAIN_MAX];
+    int chain_count;
+    int chain_ok;                    /* every certificate so far fitted */
+    int verdict;                     /* the checks' answer (engine code, 0 passed; -1 not yet) */
 };
 void ot_x509_init(struct ot_x509 *x, struct OTConnection *conn,
                   const struct ot_impls *impls,

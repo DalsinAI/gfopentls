@@ -88,6 +88,9 @@ if(Python3_FOUND)
     add_test(NAME opentls_ca_bundle
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_ca_bundle.py
                      $<TARGET_FILE:opentls_client> ${CMAKE_CURRENT_BINARY_DIR}/ca-bundle)
+    add_test(NAME opentls_cert_fields
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cert_fields.py
+                     $<TARGET_FILE:opentls_client>)
     add_test(NAME opentls_local_servers
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tls_local.py
                      $<TARGET_FILE:opentls_client> $<TARGET_FILE:opentls_ftps_get>)

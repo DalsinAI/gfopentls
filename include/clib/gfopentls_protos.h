@@ -41,5 +41,12 @@ LONG OT_GetErrorDetail(struct OTConnection *connection);
 CONST_STRPTR OT_GetPeerName(struct OTConnection *connection);
 LONG OT_SetVersion(struct OTConnection *connection, LONG minVersion, LONG maxVersion);
 LONG OT_SessionHasTicket(struct OTSession *session);
+LONG OT_GetVerifyResult(struct OTConnection *connection);
+LONG OT_GetPeerChainLength(struct OTConnection *connection);
+LONG OT_GetPeerCertificateN(struct OTConnection *connection, LONG index, APTR buffer, LONG length);
+CONST_STRPTR OT_GetKeyExchange(struct OTConnection *connection);
+CONST_STRPTR OT_GetMAC(struct OTConnection *connection);
+LONG OT_CertInfo(CONST_APTR der, LONG length, struct OTCertInfo *info);
+LONG OT_CertAltName(CONST_APTR der, LONG length, LONG index, STRPTR buffer, LONG size);
 
 #endif

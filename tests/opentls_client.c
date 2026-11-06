@@ -7,7 +7,10 @@
  *     --ca FILE        trust FILE as well (OTContextConfig.CAFile)
  *     --trust FILE     OT_AddTrustFile()
  *     --no-system      OTCF_NO_SYSTEM_TRUST
- *     --verify MODE    full, nohost, none, pinned
+ *     --verify MODE    full, nohost, none, pinned, report
+ *     --certfile FILE  print a DER certificate's fields and stop (no connection)
+ *     --certs          print the peer chain's fields (OT_CertInfo), the
+ *                      verify result, key exchange and MAC (revision 5)
  *     --pin HEX        OT_PinCertificate() (64 hex digits)
  *     --sni NAME       the host name for TLS when it differs from host
  *     --alpn LIST      OT_SetALPN()
@@ -72,6 +75,8 @@ static const char *opt_ca, *opt_trust, *opt_pin, *opt_sni, *opt_alpn, *opt_send,
 static int opt_nosys, opt_verify, opt_min, opt_max, opt_conns = 1, opt_nooff, opt_small,
            opt_hook, opt_nonblock, opt_repeat = 0, opt_trace, opt_print, opt_chunk, opt_converse,
            opt_setversion, opt_vmin, opt_vmax;
+static int opt_certs;
+static const char *opt_certfile;
 static long opt_upload;
 static double trace_t0;
 
@@ -215,6 +220,71 @@ static int version_of(const char *s)
          : !strcmp(s, "12") ? OT_TLS12 : !strcmp(s, "13") ? OT_TLS13 : -1;
 }
 
+static void print_time(int index, int n, const char *what, const struct OTCertTime *t)
+{
+    printf("conn%d.cert%d.%s=%04u-%02u-%02uT%02u:%02u:%02uZ\n", index, n, what, t->Year, t->Month, t->Day,
+           t->Hour, t->Minute, t->Second);
+}
+
+/* revision 5: a certificate's fields, as OT_CertInfo() and OT_CertAltName() read them */
+static void print_cert(int index, int n, const unsigned char *der, LONG len)
+{
+    struct OTCertInfo info;
+    char alt[256];
+    LONG k, kind;
+    int i;
+    info.Size = sizeof info;
+    k = OT_CertInfo(der, len, &info);
+    if (k != OTERR_OK) { printf("conn%d.cert%d.info=%ld\n", index, n, (long)k); return; }
+    printf("conn%d.cert%d.subject=%s\nconn%d.cert%d.issuer=%s\n", index, n, info.Subject, index, n, info.Issuer);
+    print_time(index, n, "notbefore", &info.NotBefore);
+    print_time(index, n, "notafter", &info.NotAfter);
+    printf("conn%d.cert%d.serial=", index, n);
+    for (i = 0; i < info.SerialLength; ++i) printf("%02x", info.Serial[i]);
+    printf("\nconn%d.cert%d.version=%ld\nconn%d.cert%d.key=%s/%ld/%s\nconn%d.cert%d.sig=%s\n"
+           "conn%d.cert%d.self=%ld\nconn%d.cert%d.sha256=", index, n, (long)info.Version,
+           index, n, info.KeyAlgorithm, (long)info.KeyBits, info.KeyCurve, index, n,
+           info.SignatureAlgorithm, index, n, (long)info.SelfSigned, index, n);
+    for (i = 0; i < 32; ++i) printf("%02x", info.SHA256[i]);
+    printf("\nconn%d.cert%d.sha1=", index, n);
+    for (i = 0; i < 20; ++i) printf("%02x", info.SHA1[i]);
+    printf("\nconn%d.cert%d.alt=", index, n);
+    for (k = 0; (kind = OT_CertAltName(der, len, k, (STRPTR)alt, sizeof alt)) > 0; ++k)
+        printf("%s%s:%s", k ? "," : "", kind == OT_ALT_DNS ? "DNS" : kind == OT_ALT_IP ? "IP"
+               : kind == OT_ALT_EMAIL ? "email" : "URI", alt);
+    printf("\nconn%d.cert%d.altcount=%ld\n", index, n, (long)info.AltNameCount);
+}
+
+/* revision 5: what a program shows its user of the peer */
+static void print_peer(struct OTConnection *c, int index)
+{
+    static unsigned char der[16384];
+    LONG n, count = OT_GetPeerChainLength(c);
+    printf("conn%d.verify=%ld\nconn%d.chain=%ld\nconn%d.kex=%s\nconn%d.mac=%s\n", index,
+           (long)OT_GetVerifyResult(c), index, (long)count, index, (const char *)OT_GetKeyExchange(c),
+           index, (const char *)OT_GetMAC(c));
+    for (n = 0; n < count; ++n) {
+        LONG len = OT_GetPeerCertificateN(c, n, der, sizeof der);
+        if (len <= 0) printf("conn%d.cert%ld.get=%ld\n", index, (long)n, (long)len);
+        else print_cert(index, (int)n, der, len);
+    }
+    printf("conn%d.cert%ld.get=%ld\n", index, (long)count, (long)OT_GetPeerCertificateN(c, count, der, sizeof der));
+}
+
+/* --certfile: one DER certificate's fields, no connection */
+static int cert_file(const char *path)
+{
+    static unsigned char der[16384];
+    FILE *f = fopen(path, "rb");
+    size_t len;
+    if (!f) { printf("result=nofile\n"); return 20; }
+    len = fread(der, 1, sizeof der, f);
+    fclose(f);
+    print_cert(0, 0, der, (LONG)len);
+    printf("result=ok\n");
+    return 0;
+}
+
 static int one_connection(struct OTContext *ctx, const char *host, const char *name, int port,
                           struct OTSession **session, int index, double *ms)
 {
@@ -261,6 +331,7 @@ static int one_connection(struct OTContext *ctx, const char *host, const char *n
         printf("\n");
         printf("conn%d.peername=%s\n", index, (const char *)OT_GetPeerName(c));
     }
+    if (opt_certs) print_peer(c, index);
     if (rc != OTERR_OK) {
         printf("conn%d.error=%ld\nconn%d.detail=%ld\nconn%d.text=%s\n", index, (long)rc,
                index, (long)OT_GetErrorDetail(c), index, (const char *)OT_GetErrorText(c));
@@ -349,7 +420,8 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--no-system")) opt_nosys = 1;
         else if (!strcmp(a, "--verify") && v) {
             opt_verify = !strcmp(v, "nohost") ? OTV_NO_HOSTNAME : !strcmp(v, "none") ? OTV_NONE
-                       : !strcmp(v, "pinned") ? OTV_PINNED_ONLY : OTV_FULL;
+                       : !strcmp(v, "pinned") ? OTV_PINNED_ONLY
+                       : !strcmp(v, "report") ? OTV_REPORT : OTV_FULL;
             ++i;
         }
         else if (!strcmp(a, "--pin") && v) { opt_pin = v; ++i; }
@@ -367,6 +439,8 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--nonblock")) opt_nonblock = 1;
         else if (!strcmp(a, "--trace")) opt_trace = 1;
         else if (!strcmp(a, "--print")) opt_print = 1;
+        else if (!strcmp(a, "--certs")) opt_certs = 1;
+        else if (!strcmp(a, "--certfile") && v) { opt_certfile = v; ++i; }
         else if (!strcmp(a, "--chunk") && v) { opt_chunk = atoi(v); ++i; }
         else if (!strcmp(a, "--upload") && v) { opt_upload = atol(v); ++i; }
         else if (!strcmp(a, "--converse")) opt_converse = 1;
@@ -382,6 +456,7 @@ int main(int argc, char **argv)
         else if (!host) host = a;
         else port = atoi(a);
     }
+    if (opt_certfile && !host) host = "", port = 1;
     if (!host || port <= 0) {
         printf("usage: opentls_client [options] host port\n");
         return 20;
@@ -393,6 +468,15 @@ int main(int argc, char **argv)
         TimerBase = treq.tr_node.io_Device;
 #endif
     printf("version=%lx\naccelerated=%lx\n", (unsigned long)OT_Version(), (unsigned long)OT_Accelerated());
+    if (opt_certfile) {
+        int rc = cert_file(opt_certfile);
+#ifdef __amigaos__
+        if (TimerBase) CloseDevice((struct IORequest *)&treq);
+        CloseLibrary(OpenTLSBase);
+        CloseLibrary(SocketBase);
+#endif
+        return rc;
+    }
     memset(&cfg, 0, sizeof cfg);
     cfg.Size = sizeof cfg;
     cfg.Flags = (opt_nosys ? OTCF_NO_SYSTEM_TRUST : 0) | (opt_nooff ? OTCF_NO_OFFLOAD : 0)

@@ -73,6 +73,9 @@
 #define OTV_NO_HOSTNAME 1   /* chain and dates; any host name */
 #define OTV_NONE        2   /* no checks: encryption without authentication */
 #define OTV_PINNED_ONLY 3   /* only a certificate given to OT_PinCertificate() */
+#define OTV_REPORT      4   /* revision 5: the handshake goes on as with OTV_NONE,
+                             * and OT_GetVerifyResult() answers what OTV_FULL
+                             * would have said, for a program that asks its user */
 
 /* struct OTContextConfig Flags. */
 #define OTCF_NO_SYSTEM_TRUST  (1UL << 0)  /* only CAFile and OT_AddTrust*() */
@@ -109,6 +112,40 @@ struct OTIOMessage {
 #define OTACC_ECDSA     (1UL << 5)
 
 #define OT_FINGERPRINT_SIZE 32   /* SHA-256 of the certificate's DER */
+
+/* Revision 5: what OT_CertInfo() fills in for a DER certificate.
+ * Set Size to sizeof(struct OTCertInfo) first. Names are RFC 4514 strings
+ * (last RDN first, "CN=host,O=Org,C=GB"), UTF-8 and NUL-terminated, cut
+ * short if longer than the field. Times are UTC. */
+struct OTCertTime {
+    UWORD Year;
+    UBYTE Month, Day, Hour, Minute, Second, Pad;
+};
+
+struct OTCertInfo {
+    ULONG Size;                    /* sizeof(struct OTCertInfo) */
+    LONG Version;                  /* 1 to 3 */
+    UBYTE Serial[32];              /* big-endian, no sign byte */
+    LONG SerialLength;
+    char Subject[512];
+    char Issuer[512];
+    struct OTCertTime NotBefore;
+    struct OTCertTime NotAfter;
+    char KeyAlgorithm[16];         /* "RSA", "RSA-PSS", "ECDSA", "Ed25519", "Ed448", "DSA" or an OID */
+    LONG KeyBits;                  /* modulus or curve size */
+    char KeyCurve[16];             /* "secp256r1" etc. for ECDSA, else "" */
+    char SignatureAlgorithm[32];   /* "RSA-SHA256", "ECDSA-SHA384", "Ed25519", ... or an OID */
+    LONG SelfSigned;               /* 1 when the issuer name is the subject name */
+    LONG AltNameCount;             /* subject alt names OT_CertAltName() can read */
+    UBYTE SHA256[32];              /* fingerprints of the whole DER */
+    UBYTE SHA1[20];
+};
+
+/* Revision 5: OT_CertAltName() kinds. */
+#define OT_ALT_DNS   1   /* dNSName */
+#define OT_ALT_IP    2   /* iPAddress, as "192.0.2.1" or "2001:db8::1" (RFC 5952) */
+#define OT_ALT_EMAIL 3   /* rfc822Name */
+#define OT_ALT_URI   4   /* uniformResourceIdentifier */
 
 struct OTContext;      /* opaque */
 struct OTConnection;   /* opaque */

@@ -641,7 +641,7 @@ LONG OT_SetALPN(struct OTConnection *c, CONST_STRPTR protocols)
 LONG OT_SetVerify(struct OTConnection *c, LONG mode)
 {
     BEFORE_HANDSHAKE(c);
-    if (mode < OTV_FULL || mode > OTV_PINNED_ONLY) return OTERR_ARGS;
+    if (mode < OTV_FULL || mode > OTV_REPORT) return OTERR_ARGS;
     c->verify = mode;
     return OTERR_OK;
 }
@@ -711,7 +711,7 @@ static LONG start_handshake(struct OTConnection *c)
     const br_x509_trust_anchor *ta = NULL;
     size_t ta_count = 0;
     unsigned char seed[32];
-    int need_trust = c->verify == OTV_FULL || c->verify == OTV_NO_HOSTNAME;
+    int need_trust = c->verify == OTV_FULL || c->verify == OTV_NO_HOSTNAME || c->verify == OTV_REPORT;
 
     if (!c->have_io)
         return ot_fail(c, OTERR_STATE, 0, "No socket or I/O hook was given.", NULL, NULL);
@@ -1076,4 +1076,96 @@ LONG OT_Random(APTR buffer, LONG length)
 ULONG OT_Accelerated(VOID)
 {
     return ot_glue_accelerated();
+}
+
+/* ---- version 1, revision 5 (6 November 2026): for FileZilla ---- */
+
+LONG OT_GetVerifyResult(struct OTConnection *c)
+{
+    int err;
+    if (!c) return OTERR_ARGS;
+    err = c->x509.verdict;
+    if (!c->x509.have_fingerprint || err < 0) return OTERR_STATE;
+    if (!err) return OTERR_OK;
+    if (err == BR_ERR_X509_BAD_SERVER_NAME || err == OT_X509_IP) return OTERR_HOSTNAME;
+    if (err == BR_ERR_X509_EXPIRED || err == BR_ERR_X509_TIME_UNKNOWN) return OTERR_EXPIRED;
+    if (err == BR_ERR_X509_NOT_TRUSTED) return c->ctx->merged_count ? OTERR_UNTRUSTED : OTERR_TRUSTSTORE;
+    if (err == OT_X509_PINNED) return OTERR_PINNED;
+    return OTERR_BADCERT;
+}
+
+LONG OT_GetPeerChainLength(struct OTConnection *c)
+{
+    struct ot_x509 *x;
+    LONG n = 0;
+    if (!c) return OTERR_ARGS;
+    x = &c->x509;
+    if (!x->have_fingerprint) return OTERR_STATE;
+    /* the certificates kept whole, from the server's first */
+    while (n < x->chain_count && x->chain_end[n] - x->chain_off[n] == x->chain_want[n]) ++n;
+    return n;
+}
+
+LONG OT_GetPeerCertificateN(struct OTConnection *c, LONG index, APTR buffer, LONG length)
+{
+    struct ot_x509 *x;
+    size_t len;
+    if (!c || index < 0) return OTERR_ARGS;
+    x = &c->x509;
+    if (!x->have_fingerprint) return OTERR_STATE;
+    if (index >= OT_GetPeerChainLength(c)) return OTERR_ARGS;
+    len = x->chain_end[index] - x->chain_off[index];
+    if (!buffer) return (LONG)len;
+    if (length < (LONG)len) return OTERR_ARGS;
+    memcpy(buffer, x->chain + x->chain_off[index], len);
+    return (LONG)len;
+}
+
+CONST_STRPTR OT_GetKeyExchange(struct OTConnection *c)
+{
+    unsigned curve;
+    br_ssl_session_parameters p;
+    if (!c || (c->state != OTS_OPEN && c->state != OTS_CLOSED)) return (CONST_STRPTR)"";
+    if (ot13_active(c))
+        curve = c->t13->group == 29 ? BR_EC_curve25519 : c->t13->group == 23 ? BR_EC_secp256r1 : 0;
+    else {
+        br_ssl_engine_get_session_parameters(&c->cc.eng, &p);
+        if (p.cipher_suite >> 8 == 0xC0 || p.cipher_suite >> 8 == 0xCC)   /* ECDHE suites */
+            curve = br_ssl_engine_get_ecdhe_curve(&c->cc.eng);
+        else
+            return (CONST_STRPTR)"RSA";
+    }
+    switch (curve) {
+    case BR_EC_curve25519: return (CONST_STRPTR)"x25519";
+    case BR_EC_secp256r1: return (CONST_STRPTR)"secp256r1";
+    case BR_EC_secp384r1: return (CONST_STRPTR)"secp384r1";
+    case BR_EC_secp521r1: return (CONST_STRPTR)"secp521r1";
+    }
+    return (CONST_STRPTR)"";
+}
+
+static int has_word(const char *s, const char *w)
+{
+    for (; *s; ++s) {
+        size_t i = 0;
+        while (w[i] && s[i] == w[i]) ++i;
+        if (!w[i]) return 1;
+    }
+    return 0;
+}
+
+CONST_STRPTR OT_GetMAC(struct OTConnection *c)
+{
+    const char *name;
+    size_t n;
+    if (!c || (c->state != OTS_OPEN && c->state != OTS_CLOSED)) return (CONST_STRPTR)"";
+    if (ot13_active(c)) return (CONST_STRPTR)"AEAD";
+    name = (const char *)OT_GetCipher(c);
+    n = strlen(name);
+    if (!n) return (CONST_STRPTR)"";
+    if (has_word(name, "GCM") || has_word(name, "CHACHA20")) return (CONST_STRPTR)"AEAD";
+    if (n > 7 && !strcmp(name + n - 7, "-SHA384")) return (CONST_STRPTR)"SHA384";
+    if (n > 7 && !strcmp(name + n - 7, "-SHA256")) return (CONST_STRPTR)"SHA256";
+    if (n > 4 && !strcmp(name + n - 4, "-SHA")) return (CONST_STRPTR)"SHA1";
+    return (CONST_STRPTR)"";
 }

@@ -288,6 +288,42 @@ def main():
     case("OTV_PINNED_ONLY with another pin", Server("self", chain=False),
          CA + ["--verify", "pinned", "--pin", "00" * 32], {"result": "fail", "conn0.error": "-19"})
     case("OTV_NONE", Server("self", chain=False), CA + ["--verify", "none"], {"result": "ok"})
+    # revision 5: OTV_REPORT goes on as OTV_NONE does and keeps what OTV_FULL would have said;
+    # the whole chain, the key exchange and the MAC are readable afterwards
+    R = CA + ["--verify", "report", "--certs"]
+    case("OTV_REPORT, a good chain: OK, 2 certificates", Server("ecleaf", NO13), R + get,
+         {"result": "ok", "conn0.verify": "0", "conn0.chain": "2", "conn0.cert0.subject": "CN=ecleaf",
+          "conn0.cert0.issuer": "CN=GFOpenTLS Test Intermediate", "conn0.cert1.subject": "CN=GFOpenTLS Test Intermediate",
+          "conn0.cert1.issuer": "CN=GFOpenTLS Test Root", "conn0.cert0.alt": "DNS:localhost,IP:127.0.0.1",
+          "conn0.cert0.key": "ECDSA/256/secp256r1", "conn0.cert1.key": "ECDSA/384/secp384r1",
+          "conn0.cert1.sig": "RSA-SHA256", "conn0.cert2.get": "-1", "conn0.kex": "x25519", "conn0.mac": "AEAD"})
+    case("OTV_REPORT, TLS 1.3 on P-256", Server("ecleaf", ["-groups", "P-256"]), R,
+         {"result": "ok", "conn0.verify": "0", "conn0.chain": "2", "conn0.kex": "secp256r1",
+          "conn0.protocol": "0304"})
+    case("OTV_REPORT, TLS 1.2 on P-384 with HMAC-SHA-384", Server("ecleaf", NO13 + [
+         "-groups", "P-384", "-cipher", "ECDHE-ECDSA-AES256-SHA384"]), R,
+         {"result": "ok", "conn0.kex": "secp384r1", "conn0.mac": "SHA384"})
+    case("OTV_REPORT, RSA key exchange", Server("rsaleaf", NO13 + ["-cipher", "AES128-GCM-SHA256"]), R,
+         {"result": "ok", "conn0.kex": "RSA", "conn0.mac": "AEAD", "conn0.cert0.key": "RSA/2048/"})
+    case("OTV_REPORT, self-signed: UNTRUSTED, connected", Server("self", chain=False), R,
+         {"result": "ok", "conn0.verify": "-10", "conn0.chain": "1", "conn0.cert0.self": "1",
+          "conn0.cert0.sha256": fp_self})
+    case("OTV_REPORT, wrong host name: HOSTNAME, connected", Server("wrong"), R,
+         {"result": "ok", "conn0.verify": "-11", "conn0.cert0.alt": "DNS:wrong.example"})
+    case("OTV_REPORT, expired: EXPIRED, connected", Server("expired"), R,
+         {"result": "ok", "conn0.verify": "-12", "conn0.cert0.notafter": "2021-01-01T00:00:00Z"})
+    case("OTV_REPORT, Ed25519 leaf, TLS 1.3", Server("edleaf"), R,
+         {"result": "ok", "conn0.verify": "0", "conn0.cert0.key": "Ed25519/256/"})
+    case("OTV_REPORT, Ed25519 leaf, wrong name", Server("edroot"), R + ["--sni", "wrong.example"],
+         {"result": "ok", "conn0.verify": "-11"})
+    case("OTV_REPORT, the pinned certificate: OK", Server("self", chain=False), R + ["--pin", fp_self],
+         {"result": "ok", "conn0.verify": "0"})
+    case("OTV_REPORT, an IP address not in the certificate", Server("nameonly"), R,
+         {"result": "ok", "conn0.verify": "-11"}, host="127.0.0.1")
+    case("OTV_FULL still refuses (and the chain is still readable)", Server("wrong"), CA + ["--certs"],
+         {"result": "fail", "conn0.error": "-11", "conn0.verify": "-11", "conn0.chain": "2"})
+    case("OTV_REPORT, resumed TLS 1.3: no certificate sent, so OTERR_STATE", Server("ecleaf"), R + get + ["--connections", "2"],
+         {"result": "ok", "conn0.chain": "2", "conn1.resumed": "1", "conn1.verify": "-15", "conn1.chain": "-15"})
     case("OTV_NO_HOSTNAME", Server("wrong"), CA + ["--verify", "nohost"], {"result": "ok"})
     case("an IP address in the certificate", Server("ecleaf"), CA, {"result": "ok"}, host="127.0.0.1")
     case("an IP address not in the certificate", Server("nameonly"), CA,
