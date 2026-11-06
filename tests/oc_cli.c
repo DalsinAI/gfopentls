@@ -74,6 +74,9 @@ int main(void)
         } else if (!strcmp(w[0], "sha256")) {
             size_t l = unhex(a, w[1]);
             oc_sha256(a, l, out); put(out, 32);
+        } else if (!strcmp(w[0], "sha1")) {
+            size_t l = unhex(a, w[1]);
+            oc_sha1(a, l, out); put(out, 20);
         } else if (!strcmp(w[0], "sha512")) {
             size_t l = unhex(a, w[1]);
             oc_sha512(a, l, out); put(out, 64);
