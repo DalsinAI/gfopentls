@@ -8,7 +8,9 @@ add_library(opencrypto STATIC
     src/opencrypto_sha256.c src/opencrypto_sha512.c src/opencrypto_sha1.c
     src/opencrypto_x25519.c src/opencrypto_ed25519.c
     src/opencrypto_sntrup761.c src/opencrypto_chacha20.c src/opencrypto_ghash.c src/opencrypto_ecdh.c src/opencrypto_md5.c
-    src/opencrypto_aes.c src/opencrypto_pubkey.c src/opencrypto_pss.c)
+    src/opencrypto_aes.c src/opencrypto_pubkey.c src/opencrypto_pss.c
+    src/opencrypto_hmac.c src/opencrypto_sha3.c src/opencrypto_argon2.c
+    src/opencrypto_bignum.c src/opencrypto_ecdsa_sign.c)
 target_include_directories(opencrypto PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 add_executable(test_opencrypto tests/test_opencrypto.c)
@@ -18,12 +20,17 @@ add_executable(test_ssh_primitives tests/test_ssh_primitives.c)
 target_include_directories(test_ssh_primitives PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_link_libraries(test_ssh_primitives PRIVATE opencrypto)
 
+add_executable(test_keys_kdf tests/test_keys_kdf.c)
+target_include_directories(test_keys_kdf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_keys_kdf PRIVATE opencrypto)
+
 add_executable(oc_cli tests/oc_cli.c)
 target_link_libraries(oc_cli PRIVATE opencrypto)
 
 enable_testing()
 add_test(NAME opencrypto_vectors COMMAND test_opencrypto)
 add_test(NAME opencrypto_ssh_vectors COMMAND test_ssh_primitives)
+add_test(NAME opencrypto_keys_kdf_vectors COMMAND test_keys_kdf)
 # against Python's cryptography package (OpenSSL), when it is installed
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_FOUND)

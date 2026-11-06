@@ -1,4 +1,6 @@
-/* GFOpenCrypto: Ed25519 signature verification (RFC 8032, section 5.1.7).
+/* GFOpenCrypto: Ed25519 signature verification (RFC 8032, section 5.1.7),
+ * and since 6 November 2026 signing (section 5.1.6) and the public key from
+ * a seed (5.1.5), at the end of this file.
  * Copyright (c) 2026 AmiCradle Team. MIT.
  *
  * Verification handles only public values (a host key, a signature, the
@@ -202,4 +204,129 @@ int oc_ed25519_verify(const uint8_t sig[64], const uint8_t pk[32],
     ge_add(p, a);
     ge_encode(check, p);
     return oc_ct_equal(check, sig, 32) ? 1 : 0;
+}
+
+/* ---- signing (RFC 8032 section 5.1.6), 6 November 2026 ----
+ * The secret scalar and the nonce never steer a branch or an index: the
+ * point products are the ladder above (a swap by mask at every bit), and
+ * the scalar arithmetic mod L below works by mask too. */
+
+/* out = h mod L, h 64 bytes little-endian; bit by bit, the subtraction
+ * taken by mask */
+static void sc_reduce64_ct(uint8_t out[32], const uint8_t h[64])
+{
+    uint32_t r[9], l[9], t[9], mask;
+    int bit, i;
+    uint64_t c;
+    for (i = 0; i < 9; ++i) r[i] = 0;
+    for (i = 0; i < 8; ++i)
+        l[i] = (uint32_t)ed_L[4 * i] | (uint32_t)ed_L[4 * i + 1] << 8 |
+               (uint32_t)ed_L[4 * i + 2] << 16 | (uint32_t)ed_L[4 * i + 3] << 24;
+    l[8] = 0;
+    for (bit = 511; bit >= 0; --bit) {
+        for (i = 8; i > 0; --i) r[i] = r[i] << 1 | r[i - 1] >> 31;
+        r[0] = r[0] << 1 | ((h[bit >> 3] >> (bit & 7)) & 1);
+        c = 0;
+        for (i = 0; i < 9; ++i) {
+            uint64_t d = (uint64_t)r[i] - l[i] - c;
+            t[i] = (uint32_t)d;
+            c = (d >> 32) & 1;
+        }
+        mask = (uint32_t)c - 1;             /* no borrow: r >= L, take t */
+        for (i = 0; i < 9; ++i) r[i] ^= mask & (r[i] ^ t[i]);
+    }
+    for (i = 0; i < 32; ++i) out[i] = (uint8_t)(r[i >> 2] >> (8 * (i & 3)));
+    oc_cleanse(r, sizeof r);
+    oc_cleanse(t, sizeof t);
+}
+
+/* s = (a b + c) mod L, all 32 bytes little-endian */
+static void sc_muladd(uint8_t s[32], const uint8_t a[32], const uint8_t b[32], const uint8_t c[32])
+{
+    uint32_t x[8], y[8], z[17];
+    uint8_t wide[64];
+    int i, j;
+    uint64_t carry;
+    for (i = 0; i < 8; ++i) {
+        x[i] = (uint32_t)a[4 * i] | (uint32_t)a[4 * i + 1] << 8 |
+               (uint32_t)a[4 * i + 2] << 16 | (uint32_t)a[4 * i + 3] << 24;
+        y[i] = (uint32_t)b[4 * i] | (uint32_t)b[4 * i + 1] << 8 |
+               (uint32_t)b[4 * i + 2] << 16 | (uint32_t)b[4 * i + 3] << 24;
+    }
+    for (i = 0; i < 17; ++i) z[i] = 0;
+    for (i = 0; i < 8; ++i) {
+        z[i] = (uint32_t)c[4 * i] | (uint32_t)c[4 * i + 1] << 8 |
+               (uint32_t)c[4 * i + 2] << 16 | (uint32_t)c[4 * i + 3] << 24;
+    }
+    for (i = 0; i < 8; ++i) {
+        carry = 0;
+        for (j = 0; j < 8; ++j) {
+            carry += (uint64_t)z[i + j] + (uint64_t)x[i] * y[j];
+            z[i + j] = (uint32_t)carry;
+            carry >>= 32;
+        }
+        for (j = i + 8; j < 17; ++j) {              /* to the top, whatever the carry */
+            carry += z[j];
+            z[j] = (uint32_t)carry;
+            carry >>= 32;
+        }
+    }
+    for (i = 0; i < 64; ++i) wide[i] = (uint8_t)(z[i >> 2] >> (8 * (i & 3)));
+    sc_reduce64_ct(s, wide);
+    oc_cleanse(x, sizeof x); oc_cleanse(y, sizeof y); oc_cleanse(z, sizeof z);
+    oc_cleanse(wide, sizeof wide);
+}
+
+/* a, the secret scalar (clamped), and the prefix, from the 32-byte seed */
+static void expand_seed(uint8_t az[64], const uint8_t seed[32])
+{
+    oc_sha512(seed, 32, az);
+    az[0] &= 248;
+    az[31] &= 127;
+    az[31] |= 64;
+}
+
+static void base_mult(uint8_t out[32], const uint8_t s[32])
+{
+    ge b, p;
+    ge_decode(b, ed_base);
+    ge_scalarmult(p, b, s);
+    ge_encode(out, p);
+    oc_cleanse(b, sizeof b);
+    oc_cleanse(p, sizeof p);
+}
+
+void oc_ed25519_public_key(uint8_t pk[OC_ED25519_PUBLIC_BYTES], const uint8_t seed[32])
+{
+    uint8_t az[64];
+    expand_seed(az, seed);
+    base_mult(pk, az);
+    oc_cleanse(az, sizeof az);
+}
+
+void oc_ed25519_sign(uint8_t sig[OC_ED25519_SIGNATURE_BYTES], const uint8_t seed[32],
+                     const void *msg, size_t length)
+{
+    OCSHA512 ctx;
+    uint8_t az[64], pk[32], h[64], r[32], k[32];
+    expand_seed(az, seed);
+    base_mult(pk, az);
+    /* r = H(prefix || M) mod L, R = [r]B */
+    oc_sha512_init(&ctx);
+    oc_sha512_update(&ctx, az + 32, 32);
+    oc_sha512_update(&ctx, msg, length);
+    oc_sha512_final(&ctx, h);
+    sc_reduce64_ct(r, h);
+    base_mult(sig, r);
+    /* k = H(R || A || M) mod L, S = r + k a mod L */
+    oc_sha512_init(&ctx);
+    oc_sha512_update(&ctx, sig, 32);
+    oc_sha512_update(&ctx, pk, 32);
+    oc_sha512_update(&ctx, msg, length);
+    oc_sha512_final(&ctx, h);
+    sc_reduce64_ct(k, h);
+    sc_muladd(sig + 32, k, az, r);
+    oc_cleanse(az, sizeof az);
+    oc_cleanse(h, sizeof h);
+    oc_cleanse(r, sizeof r);
 }

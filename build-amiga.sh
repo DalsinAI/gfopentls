@@ -8,7 +8,8 @@
 #               set (the GCC 16 -m68040 FPCR clash; the build uses no FPU)
 # Outputs: lib/gfopencrypto.library, tests/GFOpenCryptoLibTest (version 1's
 # calls), tests/GFOpenCryptoVectors (the published vectors, as on the PC),
-# tests/GFOpenCryptoBench (version 2's calls, checked and timed).
+# tests/GFOpenCryptoKeyVectors (2.4's additions against published vectors,
+# timed), tests/GFOpenCryptoBench (version 2's calls, checked and timed).
 # MIT, Copyright (c) 2026 AmiCradle Team.
 set -eu
 
@@ -27,7 +28,9 @@ esac
 SRC="$HERE/src/opencrypto_sha256.c $HERE/src/opencrypto_sha512.c $HERE/src/opencrypto_sha1.c
      $HERE/src/opencrypto_x25519.c $HERE/src/opencrypto_ed25519.c
      $HERE/src/opencrypto_sntrup761.c $HERE/src/opencrypto_chacha20.c $HERE/src/opencrypto_ghash.c $HERE/src/opencrypto_ecdh.c $HERE/src/opencrypto_md5.c
-     $HERE/src/opencrypto_aes.c $HERE/src/opencrypto_pubkey.c $HERE/src/opencrypto_pss.c"
+     $HERE/src/opencrypto_aes.c $HERE/src/opencrypto_pubkey.c $HERE/src/opencrypto_pss.c
+     $HERE/src/opencrypto_hmac.c $HERE/src/opencrypto_sha3.c $HERE/src/opencrypto_argon2.c
+     $HERE/src/opencrypto_bignum.c $HERE/src/opencrypto_ecdsa_sign.c"
 
 mkdir -p "$OUT/include/gfopencrypto" "$OUT/include/libraries" \
          "$OUT/include/inline" "$OUT/include/proto" "$OUT/lib" "$OUT/tests" "$OUT/obj"
@@ -58,14 +61,15 @@ echo "$OUT/lib/gfopencrypto.library ($(wc -c < "$OUT/lib/gfopencrypto.library") 
 
 "$CC" $CFLAGS -noixemul -o "$OUT/tests/GFOpenCryptoLibTest" "$HERE/tests/test_library.c"
 "$CC" $CFLAGS -noixemul -I"$HERE/tests" -o "$OUT/tests/GFOpenCryptoVectors" "$HERE/tests/test_ssh_primitives.c" $SRC
+"$CC" $CFLAGS -noixemul -I"$HERE/tests" -o "$OUT/tests/GFOpenCryptoKeyVectors" "$HERE/tests/test_keys_kdf.c" $SRC
 "$CC" $CFLAGS -noixemul -I"$HERE/tests" -o "$OUT/tests/GFOpenCryptoBench" "$HERE/tests/bench_library.c" \
   "$HERE/src/opencrypto_sha256.c"
 
 if [ -n "${FPCR_CHECK:-}" ]; then
     python3 "$FPCR_CHECK" "$P/bin/m68k-amigaos-objdump" "$OUT/lib/gfopencrypto.library" \
-        "$OUT/tests/GFOpenCryptoVectors" "$OUT/tests/GFOpenCryptoBench"
+        "$OUT/tests/GFOpenCryptoVectors" "$OUT/tests/GFOpenCryptoKeyVectors" "$OUT/tests/GFOpenCryptoBench"
 fi
-for f in GFOpenCryptoLibTest GFOpenCryptoVectors GFOpenCryptoBench; do
+for f in GFOpenCryptoLibTest GFOpenCryptoVectors GFOpenCryptoKeyVectors GFOpenCryptoBench; do
     echo "$OUT/tests/$f ($(wc -c < "$OUT/tests/$f") bytes)"
 done
 sha256sum "$OUT/lib/gfopencrypto.library"
