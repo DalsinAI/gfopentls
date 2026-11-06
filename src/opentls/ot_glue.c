@@ -1,16 +1,19 @@
-/* GFOpenTLS: BearSSL's pluggable maths, done by GFOpenCrypto.
+/* GFOpenTLS: BearSSL's pluggable maths, all done by GFOpenCrypto.
  *
- * BearSSL takes its hash functions, block ciphers, ChaCha20/Poly1305, RSA,
- * ECDSA and elliptic curves through function tables. Where GFOpenCrypto has
- * the same operation and it runs on the x86 or ARM64 cores
- * (gfopencrypto.library's OC_Accelerated()), these tables send it there;
- * everything else, and everything on a real Amiga, stays BearSSL's own
- * constant-time 68k code. The host tests build these tables over
- * GFOpenCrypto's portable C, so both paths are tested on every run.
+ * BearSSL takes its hash functions, block ciphers, GHASH, ChaCha20/Poly1305,
+ * RSA, ECDSA and elliptic curves through function tables and a few named
+ * functions. Every one of them is GFOpenCrypto's: on an Amiga through
+ * gfopencrypto.library (2.3 or newer), which runs each as host code where
+ * the machine offers it (AmiCradle) and as its own 68k code everywhere
+ * else; for the host tests over GFOpenCrypto's portable C. BearSSL's own
+ * crypto code is not linked: this file defines the hash names BearSSL's
+ * protocol code calls (br_md5_*, br_sha1_*, br_sha224/256/384/512_*), with
+ * BearSSL's context layouts and state encodings, so that HMAC, the PRFs,
+ * the multihash and X.509 work unchanged.
  *
  * MIT licensed and free. Copyright (c) 2026 AmiCradle Team. */
 #include "ot_internal.h"
-#include "inner.h"      /* BearSSL's br_rsa_pkcs1_sig_unpad() */
+#include "inner.h"      /* BearSSL's br_rsa_pkcs1_sig_unpad(), br_ecdsa_asn1_to_raw() */
 
 #ifdef __amigaos__
 #include <exec/execbase.h>
@@ -28,16 +31,29 @@ struct Library *OpenCryptoBase;
 static ULONG oc_flags;
 static int oc_tried;
 
+/* gfopencrypto.library 2.3 or newer: every operation is its call */
 static void oc_open(void)
 {
     if (oc_tried) return;
     Forbid();
     if (!oc_tried) {
+        struct Library *b;
         oc_tried = 1;
-        OpenCryptoBase = OpenLibrary((CONST_STRPTR)"gfopencrypto.library", 2);
-        oc_flags = OpenCryptoBase ? OC_Accelerated() : 0;
+        b = OpenLibrary((CONST_STRPTR)"gfopencrypto.library", 2);
+        if (b && b->lib_Version == 2 && b->lib_Revision < 3) {
+            CloseLibrary(b);
+            b = NULL;
+        }
+        OpenCryptoBase = b;
+        oc_flags = b ? OC_Accelerated() : 0;
     }
     Permit();
+}
+
+int ot_glue_ready(void)
+{
+    oc_open();
+    return OpenCryptoBase != NULL;
 }
 
 void ot_glue_cleanup(void)
@@ -48,24 +64,52 @@ void ot_glue_cleanup(void)
     oc_flags = 0;
 }
 
-static void g_sha256_blocks(unsigned char *state, const void *data, size_t n)
+/* Without the library (ot_glue_ready() 0) no connection starts and no
+ * random bytes are given; these then do nothing rather than crash. */
+#define OC_BLOCKS(fn, lvo) \
+static void fn(unsigned char *state, const void *data, size_t n) \
+{ \
+    struct OCBlocksRequest r; \
+    if (!OpenCryptoBase) return; \
+    r.state = state; r.data = data; r.blocks = n; \
+    lvo(&r); \
+}
+OC_BLOCKS(g_md5_blocks, OC_MD5Blocks)
+OC_BLOCKS(g_sha1_blocks, OC_SHA1Blocks)
+OC_BLOCKS(g_sha256_blocks, OC_SHA256Blocks)
+OC_BLOCKS(g_sha512_blocks, OC_SHA512Blocks)
+
+static void g_ghash(void *y, const void *h, const void *data, size_t len)
 {
-    struct OCBlocksRequest r;
-    r.state = state; r.data = data; r.blocks = n;
-    OC_SHA256Blocks(&r);
+    struct OCGHASHRequest r;
+    if (!OpenCryptoBase) return;
+    r.y = y; r.h = h; r.data = data; r.length = len;
+    OC_GHASH(&r);
 }
 
-static void g_sha512_blocks(unsigned char *state, const void *data, size_t n)
+static int g_ecmul(int curve, unsigned char *pt, size_t ptlen, const unsigned char *k, size_t klen)
 {
-    struct OCBlocksRequest r;
-    r.state = state; r.data = data; r.blocks = n;
-    OC_SHA512Blocks(&r);
+    struct OCECMulRequest r;
+    if (!OpenCryptoBase) return 0;
+    r.curve = curve; r.point = pt; r.point_length = ptlen; r.scalar = k; r.scalar_length = klen;
+    return OC_ECMul(&r) == 1;
+}
+
+static size_t g_ecmulgen(int curve, unsigned char *pt, const unsigned char *k, size_t klen)
+{
+    struct OCECMulRequest r;
+    LONG n;
+    if (!OpenCryptoBase) return 0;
+    r.curve = curve; r.point = pt; r.point_length = 0; r.scalar = k; r.scalar_length = klen;
+    n = OC_ECMulGen(&r);
+    return n > 0 ? (size_t)n : 0;
 }
 
 static int g_aes(unsigned char *buf, size_t len, const unsigned char *key, size_t keylen,
                  const unsigned char *iv, int mode)
 {
     struct OCAESRequest r;
+    if (!OpenCryptoBase) return OCERR_ARGS;
     r.buf = buf; r.length = len; r.key = key; r.key_length = keylen;
     r.iv = iv; r.mode = (ULONG)mode;
     return OC_AES(&r);
@@ -75,6 +119,7 @@ static void g_chacha(unsigned char *buf, size_t len, const unsigned char *key,
                      const unsigned char *nonce, uint64_t counter)
 {
     struct OCChaChaRequest r;
+    if (!OpenCryptoBase) { memset(buf, 0, len); return; }
     r.out = buf; r.in = buf; r.length = len; r.key = key; r.nonce = nonce;
     r.counter_hi = (ULONG)(counter >> 32); r.counter_lo = (ULONG)counter;
     OC_ChaCha20(&r);
@@ -83,6 +128,7 @@ static void g_chacha(unsigned char *buf, size_t len, const unsigned char *key,
 static void g_poly(unsigned char *tag, const void *data, size_t len, const unsigned char *key)
 {
     struct OCPolyRequest r;
+    if (!OpenCryptoBase) { memset(tag, 0xff, 16); return; }
     r.tag = tag; r.data = data; r.length = len; r.key = key;
     OC_Poly1305(&r);
 }
@@ -90,6 +136,7 @@ static void g_poly(unsigned char *tag, const void *data, size_t len, const unsig
 static int g_x25519(unsigned char *out, const unsigned char *scalar, const unsigned char *point)
 {
     struct OCX25519Request r;
+    if (!OpenCryptoBase) return -1;
     r.out = out; r.scalar = scalar; r.point = point;
     return OC_X25519(&r);
 }
@@ -98,6 +145,7 @@ static int g_rsa(unsigned char *out, const unsigned char *x, const unsigned char
                  const unsigned char *e, size_t elen)
 {
     struct OCRSARequest r;
+    if (!OpenCryptoBase) return -1;
     r.out = out; r.sig = x; r.n = n; r.n_length = nlen; r.e = e; r.e_length = elen;
     return OC_RSAPublic(&r);
 }
@@ -107,6 +155,7 @@ static int g_ecdsa(int curve, const unsigned char *qx, const unsigned char *qy,
                    const unsigned char *hash, size_t hlen)
 {
     struct OCECDSARequest r;
+    if (!OpenCryptoBase) return 0;
     r.curve = curve; r.qx = qx; r.qy = qy; r.r = rr; r.s = ss;
     r.hash = hash; r.hash_length = hlen;
     return OC_ECDSAVerify(&r);
@@ -145,7 +194,12 @@ ULONG ot_glue_accelerated(void)
 #else /* the host tests: GFOpenCrypto's portable C */
 
 void ot_glue_cleanup(void) {}
+int ot_glue_ready(void) { return 1; }
 
+static void g_md5_blocks(unsigned char *state, const void *data, size_t n)
+{ oc_md5_blocks(state, data, n); }
+static void g_sha1_blocks(unsigned char *state, const void *data, size_t n)
+{ oc_sha1_blocks(state, data, n); }
 static void g_sha256_blocks(unsigned char *state, const void *data, size_t n)
 { oc_sha256_blocks(state, data, n); }
 static void g_sha512_blocks(unsigned char *state, const void *data, size_t n)
@@ -158,6 +212,12 @@ static void g_chacha(unsigned char *buf, size_t len, const unsigned char *key,
 { oc_chacha20_xor(buf, buf, len, key, nonce, counter); }
 static void g_poly(unsigned char *tag, const void *data, size_t len, const unsigned char *key)
 { oc_poly1305(tag, data, len, key); }
+static void g_ghash(void *y, const void *h, const void *data, size_t len)
+{ oc_ghash(y, h, data, len); }
+static int g_ecmul(int curve, unsigned char *pt, size_t ptlen, const unsigned char *k, size_t klen)
+{ return oc_ec_mul(curve, pt, ptlen, k, klen) == 1; }
+static size_t g_ecmulgen(int curve, unsigned char *pt, const unsigned char *k, size_t klen)
+{ int n = oc_ec_mulgen(curve, pt, k, klen); return n > 0 ? (size_t)n : 0; }
 static int g_x25519(unsigned char *out, const unsigned char *scalar, const unsigned char *point)
 {
     if (!point) { oc_x25519_base(out, scalar); return 0; }
@@ -181,131 +241,166 @@ ULONG ot_glue_accelerated(void)
 }
 #endif
 
-/* ---- SHA-256, SHA-384, SHA-512 over GFOpenCrypto's block functions ---- */
+/* the MD5 and SHA initial values: RFC 1321 3.3, FIPS 180-4 5.3 */
+static const unsigned char iv_md5[16] = {
+    0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98,
+    0x76, 0x54, 0x32, 0x10
+};
+static const unsigned char iv_sha1[20] = {
+    0x67, 0x45, 0x23, 0x01, 0xef, 0xcd, 0xab, 0x89, 0x98, 0xba, 0xdc, 0xfe,
+    0x10, 0x32, 0x54, 0x76, 0xc3, 0xd2, 0xe1, 0xf0
+};
+static const unsigned char iv_sha224[32] = {
+    0xc1, 0x05, 0x9e, 0xd8, 0x36, 0x7c, 0xd5, 0x07, 0x30, 0x70, 0xdd, 0x17,
+    0xf7, 0x0e, 0x59, 0x39, 0xff, 0xc0, 0x0b, 0x31, 0x68, 0x58, 0x15, 0x11,
+    0x64, 0xf9, 0x8f, 0xa7, 0xbe, 0xfa, 0x4f, 0xa4
+};
+static const unsigned char iv_sha256[32] = {
+    0x6a, 0x09, 0xe6, 0x67, 0xbb, 0x67, 0xae, 0x85, 0x3c, 0x6e, 0xf3, 0x72,
+    0xa5, 0x4f, 0xf5, 0x3a, 0x51, 0x0e, 0x52, 0x7f, 0x9b, 0x05, 0x68, 0x8c,
+    0x1f, 0x83, 0xd9, 0xab, 0x5b, 0xe0, 0xcd, 0x19
+};
+static const unsigned char iv_sha384[64] = {
+    0xcb, 0xbb, 0x9d, 0x5d, 0xc1, 0x05, 0x9e, 0xd8, 0x62, 0x9a, 0x29, 0x2a,
+    0x36, 0x7c, 0xd5, 0x07, 0x91, 0x59, 0x01, 0x5a, 0x30, 0x70, 0xdd, 0x17,
+    0x15, 0x2f, 0xec, 0xd8, 0xf7, 0x0e, 0x59, 0x39, 0x67, 0x33, 0x26, 0x67,
+    0xff, 0xc0, 0x0b, 0x31, 0x8e, 0xb4, 0x4a, 0x87, 0x68, 0x58, 0x15, 0x11,
+    0xdb, 0x0c, 0x2e, 0x0d, 0x64, 0xf9, 0x8f, 0xa7, 0x47, 0xb5, 0x48, 0x1d,
+    0xbe, 0xfa, 0x4f, 0xa4
+};
+static const unsigned char iv_sha512[64] = {
+    0x6a, 0x09, 0xe6, 0x67, 0xf3, 0xbc, 0xc9, 0x08, 0xbb, 0x67, 0xae, 0x85,
+    0x84, 0xca, 0xa7, 0x3b, 0x3c, 0x6e, 0xf3, 0x72, 0xfe, 0x94, 0xf8, 0x2b,
+    0xa5, 0x4f, 0xf5, 0x3a, 0x5f, 0x1d, 0x36, 0xf1, 0x51, 0x0e, 0x52, 0x7f,
+    0xad, 0xe6, 0x82, 0xd1, 0x9b, 0x05, 0x68, 0x8c, 0x2b, 0x3e, 0x6c, 0x1f,
+    0x1f, 0x83, 0xd9, 0xab, 0xfb, 0x41, 0xbd, 0x6b, 0x5b, 0xe0, 0xcd, 0x19,
+    0x13, 0x7e, 0x21, 0x79
+};
 
-typedef struct {
-    const br_hash_class *vtable;
-    unsigned char buf[128];
-    uint64_t count;
-    unsigned char state[64];
-} ot_sha_context;
+/* ---- MD5, SHA-1 and SHA-2 under BearSSL's names ----
+ * Each context is BearSSL's: the vtable, the partial block (buf), the byte
+ * count, and the chaining value (val), which we keep as the bytes our
+ * block functions take: big-endian for SHA, little-endian for MD5, which is
+ * also how BearSSL's state() and set_state() encode it. */
 
-static const br_hash_class ot_sha256_vtable, ot_sha384_vtable, ot_sha512_vtable;
+typedef void (*ot_blocks_fn)(unsigned char *state, const void *data, size_t n);
 
-static size_t sha_block(const ot_sha_context *c)
+static void md_update(ot_blocks_fn blocks, size_t bl, unsigned char *buf, uint64_t *count,
+                      unsigned char *st, const void *data, size_t len)
 {
-    return c->vtable == &ot_sha256_vtable ? 64 : 128;
-}
-
-static void sha_blocks(const ot_sha_context *c, unsigned char *state, const void *data, size_t n)
-{
-    if (c->vtable == &ot_sha256_vtable) g_sha256_blocks(state, data, n);
-    else g_sha512_blocks(state, data, n);
-}
-
-static void sha_init(const br_hash_class **ctx)
-{
-    ot_sha_context *c = (ot_sha_context *)(void *)ctx;
-    br_sha512_context ref;    /* large enough for each of the three */
-    /* BearSSL's own initial state, as bytes: the IVs come from one place */
-    if (*ctx == &ot_sha256_vtable) {
-        br_sha256_init((br_sha256_context *)(void *)&ref);
-        br_sha256_state((br_sha256_context *)(void *)&ref, c->state);
-    } else if (*ctx == &ot_sha384_vtable) {
-        br_sha384_init(&ref);
-        br_sha384_state(&ref, c->state);
-    } else {
-        br_sha512_init(&ref);
-        br_sha512_state(&ref, c->state);
-    }
-    c->count = 0;
-}
-
-static void sha256_init(const br_hash_class **ctx) { *ctx = &ot_sha256_vtable; sha_init(ctx); }
-static void sha384_init(const br_hash_class **ctx) { *ctx = &ot_sha384_vtable; sha_init(ctx); }
-static void sha512_init(const br_hash_class **ctx) { *ctx = &ot_sha512_vtable; sha_init(ctx); }
-
-static void sha_update(const br_hash_class **ctx, const void *data, size_t len)
-{
-    ot_sha_context *c = (ot_sha_context *)(void *)ctx;
     const unsigned char *p = data;
-    size_t bl = sha_block(c), ptr = (size_t)c->count & (bl - 1), n;
+    size_t ptr = (size_t)*count & (bl - 1), n;
     if (!len) return;                 /* BearSSL's HMAC-DRBG hands over (NULL, 0) */
-    c->count += len;
+    *count += len;
     if (ptr) {
         n = bl - ptr < len ? bl - ptr : len;
-        memcpy(c->buf + ptr, p, n);
+        memcpy(buf + ptr, p, n);
         p += n; len -= n; ptr += n;
         if (ptr < bl) return;
-        sha_blocks(c, c->state, c->buf, 1);
+        blocks(st, buf, 1);
     }
     n = len / bl;
     if (n) {
-        sha_blocks(c, c->state, p, n);
+        blocks(st, p, n);
         p += n * bl;
         len -= n * bl;
     }
-    if (len) memcpy(c->buf, p, len);
+    if (len) memcpy(buf, p, len);
 }
 
-static void sha_out(const br_hash_class *const *ctx, void *dst)
+/* MD padding: 0x80, zeros, the length in bits in the last 8 (64-byte
+ * blocks) or 16 (128-byte blocks) bytes, big-endian, or little-endian for
+ * MD5 */
+static void md_out(ot_blocks_fn blocks, size_t bl, int le, size_t stlen,
+                   const unsigned char *buf, uint64_t count, const unsigned char *st,
+                   void *dst, size_t outlen)
 {
-    const ot_sha_context *c = (const ot_sha_context *)(const void *)ctx;
-    unsigned char buf[256], state[64];
-    size_t bl = sha_block(c), ptr = (size_t)c->count & (bl - 1), total, i;
-    size_t lenbytes = bl == 64 ? 8 : 16;
-    size_t outlen = (c->vtable->desc >> BR_HASHDESC_OUT_OFF) & BR_HASHDESC_OUT_MASK;
-    uint64_t bits = c->count << 3;
-    memcpy(state, c->state, sizeof state);
-    memcpy(buf, c->buf, ptr);
-    buf[ptr] = 0x80;
+    unsigned char last[256], state[64];
+    size_t ptr = (size_t)count & (bl - 1), lenbytes = bl == 64 ? 8 : 16, total, i;
+    uint64_t bits = count << 3;
+    memcpy(state, st, stlen);
+    memcpy(last, buf, ptr);
+    last[ptr] = 0x80;
     total = ptr + 1 + lenbytes <= bl ? bl : 2 * bl;
-    memset(buf + ptr + 1, 0, total - ptr - 1);
+    memset(last + ptr + 1, 0, total - ptr - 1);
     for (i = 0; i < 8; ++i)
-        buf[total - 1 - i] = (unsigned char)(bits >> (8 * i));
-    sha_blocks(c, state, buf, total / bl);
+        last[le ? total - 8 + i : total - 1 - i] = (unsigned char)(bits >> (8 * i));
+    blocks(state, last, total / bl);
     memcpy(dst, state, outlen);
 }
 
-static uint64_t sha_state(const br_hash_class *const *ctx, void *dst)
+#define OT_HASH(name, ctxtype, blocks, bl, le, stlen, outlen, iv) \
+void br_##name##_init(ctxtype *ctx) \
+{ \
+    ctx->vtable = &br_##name##_vtable; \
+    memcpy(ctx->val, iv, stlen); \
+    ctx->count = 0; \
+} \
+void br_##name##_update(ctxtype *ctx, const void *data, size_t len) \
+{ md_update(blocks, bl, ctx->buf, &ctx->count, (unsigned char *)ctx->val, data, len); } \
+void br_##name##_out(const ctxtype *ctx, void *out) \
+{ md_out(blocks, bl, le, stlen, ctx->buf, ctx->count, (const unsigned char *)ctx->val, out, outlen); } \
+uint64_t br_##name##_state(const ctxtype *ctx, void *out) \
+{ memcpy(out, ctx->val, stlen); return ctx->count; } \
+void br_##name##_set_state(ctxtype *ctx, const void *stb, uint64_t count) \
+{ memcpy(ctx->val, stb, stlen); ctx->count = count; }
+
+/* BearSSL defines the SHA-256 and SHA-512 update, state and set_state as
+ * SHA-224's and SHA-384's (bearssl_hash.h); each has its own init and out */
+#undef br_sha256_update
+#undef br_sha256_state
+#undef br_sha256_set_state
+#undef br_sha512_update
+#undef br_sha512_state
+#undef br_sha512_set_state
+
+OT_HASH(md5, br_md5_context, g_md5_blocks, 64, 1, 16, 16, iv_md5)
+OT_HASH(sha1, br_sha1_context, g_sha1_blocks, 64, 0, 20, 20, iv_sha1)
+OT_HASH(sha224, br_sha224_context, g_sha256_blocks, 64, 0, 32, 28, iv_sha224)
+OT_HASH(sha384, br_sha384_context, g_sha512_blocks, 128, 0, 64, 48, iv_sha384)
+
+void br_sha256_init(br_sha256_context *ctx)
 {
-    const ot_sha_context *c = (const ot_sha_context *)(const void *)ctx;
-    memcpy(dst, c->state, sha_block(c) == 64 ? 32 : 64);
-    return c->count;
+    ctx->vtable = &br_sha256_vtable;
+    memcpy(ctx->val, iv_sha256, 32);
+    ctx->count = 0;
 }
-
-/* BearSSL calls set_state on a context it never initialised (multihash,
- * HMAC), so each class's set_state puts its own table in */
-static void sha_set_state(const br_hash_class **ctx, const void *stb, uint64_t count)
+void br_sha256_out(const br_sha256_context *ctx, void *out)
+{ md_out(g_sha256_blocks, 64, 0, 32, ctx->buf, ctx->count, (const unsigned char *)ctx->val, out, 32); }
+void br_sha512_init(br_sha512_context *ctx)
 {
-    ot_sha_context *c = (ot_sha_context *)(void *)ctx;
-    memcpy(c->state, stb, sha_block(c) == 64 ? 32 : 64);
-    c->count = count;
+    ctx->vtable = &br_sha512_vtable;
+    memcpy(ctx->val, iv_sha512, 64);
+    ctx->count = 0;
 }
+void br_sha512_out(const br_sha512_context *ctx, void *out)
+{ md_out(g_sha512_blocks, 128, 0, 64, ctx->buf, ctx->count, (const unsigned char *)ctx->val, out, 64); }
 
-static void sha256_set_state(const br_hash_class **ctx, const void *stb, uint64_t count)
-{ *ctx = &ot_sha256_vtable; sha_set_state(ctx, stb, count); }
-static void sha384_set_state(const br_hash_class **ctx, const void *stb, uint64_t count)
-{ *ctx = &ot_sha384_vtable; sha_set_state(ctx, stb, count); }
-static void sha512_set_state(const br_hash_class **ctx, const void *stb, uint64_t count)
-{ *ctx = &ot_sha512_vtable; sha_set_state(ctx, stb, count); }
-
-#define OT_SHA_DESC(id, out, st, lblen, extra) \
+#define OT_HASH_CLASS(name, ctxtype, upd, st, setst, desc) \
+const br_hash_class br_##name##_vtable = { \
+    sizeof(ctxtype), desc, \
+    (void (*)(const br_hash_class **))&br_##name##_init, \
+    (void (*)(const br_hash_class **, const void *, size_t))&upd, \
+    (void (*)(const br_hash_class *const *, void *))&br_##name##_out, \
+    (uint64_t (*)(const br_hash_class *const *, void *))&st, \
+    (void (*)(const br_hash_class **, const void *, uint64_t))&setst \
+};
+#define OT_DESC(id, out, st, lblen) \
     (BR_HASHDESC_ID(id) | BR_HASHDESC_OUT(out) | BR_HASHDESC_STATE(st) \
-     | BR_HASHDESC_LBLEN(lblen) | BR_HASHDESC_MD_PADDING | BR_HASHDESC_MD_PADDING_BE | (extra))
+     | BR_HASHDESC_LBLEN(lblen) | BR_HASHDESC_MD_PADDING)
 
-static const br_hash_class ot_sha256_vtable = {
-    sizeof(ot_sha_context), OT_SHA_DESC(br_sha256_ID, 32, 32, 6, 0),
-    sha256_init, sha_update, sha_out, sha_state, sha256_set_state
-};
-static const br_hash_class ot_sha384_vtable = {
-    sizeof(ot_sha_context), OT_SHA_DESC(br_sha384_ID, 48, 64, 7, BR_HASHDESC_MD_PADDING_128),
-    sha384_init, sha_update, sha_out, sha_state, sha384_set_state
-};
-static const br_hash_class ot_sha512_vtable = {
-    sizeof(ot_sha_context), OT_SHA_DESC(br_sha512_ID, 64, 64, 7, BR_HASHDESC_MD_PADDING_128),
-    sha512_init, sha_update, sha_out, sha_state, sha512_set_state
-};
+OT_HASH_CLASS(md5, br_md5_context, br_md5_update, br_md5_state, br_md5_set_state,
+              OT_DESC(br_md5_ID, 16, 16, 6))
+OT_HASH_CLASS(sha1, br_sha1_context, br_sha1_update, br_sha1_state, br_sha1_set_state,
+              OT_DESC(br_sha1_ID, 20, 20, 6) | BR_HASHDESC_MD_PADDING_BE)
+OT_HASH_CLASS(sha224, br_sha224_context, br_sha224_update, br_sha224_state, br_sha224_set_state,
+              OT_DESC(br_sha224_ID, 28, 32, 6) | BR_HASHDESC_MD_PADDING_BE)
+OT_HASH_CLASS(sha256, br_sha256_context, br_sha224_update, br_sha224_state, br_sha224_set_state,
+              OT_DESC(br_sha256_ID, 32, 32, 6) | BR_HASHDESC_MD_PADDING_BE)
+OT_HASH_CLASS(sha384, br_sha384_context, br_sha384_update, br_sha384_state, br_sha384_set_state,
+              OT_DESC(br_sha384_ID, 48, 64, 7) | BR_HASHDESC_MD_PADDING_BE | BR_HASHDESC_MD_PADDING_128)
+OT_HASH_CLASS(sha512, br_sha512_context, br_sha384_update, br_sha384_state, br_sha384_set_state,
+              OT_DESC(br_sha512_ID, 64, 64, 7) | BR_HASHDESC_MD_PADDING_BE | BR_HASHDESC_MD_PADDING_128)
 
 /* ---- AES: CBC and CTR (GCM's counter mode) ---- */
 
@@ -396,8 +491,11 @@ static void ot_poly1305_run(const void *key, const void *iv, void *data, size_t 
     size_t total = apad + dpad + 16;
     mac = total <= sizeof small ? small : ot_alloc(total);
     if (!mac) {
-        /* no memory for the one-shot MAC: BearSSL's own, as on a real Amiga */
-        br_poly1305_ctmul32_run(key, iv, data, len, aad, aad_len, tag, ichacha, encrypt);
+        /* no memory for the one-shot MAC: nothing sent can be read, and a
+         * tag no one can guess makes the record received fail its check */
+        if (encrypt) memset(data, 0, len);
+        if (ot_random(tag, 16) != OTERR_OK) memset(tag, 0, 16);
+        ((unsigned char *)tag)[0] ^= 0x5a;
         return;
     }
     memset(pkey, 0, sizeof pkey);
@@ -484,29 +582,124 @@ static uint32_t ot_ecdsa_vrfy_asn1(const br_ec_impl *impl, const void *hash, siz
     return g_ecdsa(bits, pk->q + 1, pk->q + 1 + flen, r, s, hash, hash_len) == 1;
 }
 
-/* ---- elliptic curves: X25519 through GFOpenCrypto, NIST curves BearSSL's ---- */
-
-static const br_ec_impl *ec_base(void)
-{
-#ifdef OT_LOMUL
-    return &br_ec_all_m15;
-#else
-    return &br_ec_all_m31;
-#endif
-}
+/* ---- elliptic curves: X25519, P-256, P-384 and P-521 ----
+ * The generators and orders: SEC 2 (2010) 2.4.2, 2.5.1 and 2.6.1 (FIPS
+ * 186-4 D.1.2), uncompressed; Curve25519's as BearSSL's interface wants
+ * them (RFC 7748's u = 9, and a "order" that gives any 255-bit scalar,
+ * which X25519 clamps). */
+static const unsigned char p256_g[65] = {
+    0x04, 0x6b, 0x17, 0xd1, 0xf2, 0xe1, 0x2c, 0x42, 0x47, 0xf8, 0xbc, 0xe6,
+    0xe5, 0x63, 0xa4, 0x40, 0xf2, 0x77, 0x03, 0x7d, 0x81, 0x2d, 0xeb, 0x33,
+    0xa0, 0xf4, 0xa1, 0x39, 0x45, 0xd8, 0x98, 0xc2, 0x96, 0x4f, 0xe3, 0x42,
+    0xe2, 0xfe, 0x1a, 0x7f, 0x9b, 0x8e, 0xe7, 0xeb, 0x4a, 0x7c, 0x0f, 0x9e,
+    0x16, 0x2b, 0xce, 0x33, 0x57, 0x6b, 0x31, 0x5e, 0xce, 0xcb, 0xb6, 0x40,
+    0x68, 0x37, 0xbf, 0x51, 0xf5
+};
+static const unsigned char p256_n[32] = {
+    0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84,
+    0xf3, 0xb9, 0xca, 0xc2, 0xfc, 0x63, 0x25, 0x51
+};
+static const unsigned char p384_g[97] = {
+    0x04, 0xaa, 0x87, 0xca, 0x22, 0xbe, 0x8b, 0x05, 0x37, 0x8e, 0xb1, 0xc7,
+    0x1e, 0xf3, 0x20, 0xad, 0x74, 0x6e, 0x1d, 0x3b, 0x62, 0x8b, 0xa7, 0x9b,
+    0x98, 0x59, 0xf7, 0x41, 0xe0, 0x82, 0x54, 0x2a, 0x38, 0x55, 0x02, 0xf2,
+    0x5d, 0xbf, 0x55, 0x29, 0x6c, 0x3a, 0x54, 0x5e, 0x38, 0x72, 0x76, 0x0a,
+    0xb7, 0x36, 0x17, 0xde, 0x4a, 0x96, 0x26, 0x2c, 0x6f, 0x5d, 0x9e, 0x98,
+    0xbf, 0x92, 0x92, 0xdc, 0x29, 0xf8, 0xf4, 0x1d, 0xbd, 0x28, 0x9a, 0x14,
+    0x7c, 0xe9, 0xda, 0x31, 0x13, 0xb5, 0xf0, 0xb8, 0xc0, 0x0a, 0x60, 0xb1,
+    0xce, 0x1d, 0x7e, 0x81, 0x9d, 0x7a, 0x43, 0x1d, 0x7c, 0x90, 0xea, 0x0e,
+    0x5f
+};
+static const unsigned char p384_n[48] = {
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xc7, 0x63, 0x4d, 0x81, 0xf4, 0x37, 0x2d, 0xdf, 0x58, 0x1a, 0x0d, 0xb2,
+    0x48, 0xb0, 0xa7, 0x7a, 0xec, 0xec, 0x19, 0x6a, 0xcc, 0xc5, 0x29, 0x73
+};
+static const unsigned char p521_g[133] = {
+    0x04, 0x00, 0xc6, 0x85, 0x8e, 0x06, 0xb7, 0x04, 0x04, 0xe9, 0xcd, 0x9e,
+    0x3e, 0xcb, 0x66, 0x23, 0x95, 0xb4, 0x42, 0x9c, 0x64, 0x81, 0x39, 0x05,
+    0x3f, 0xb5, 0x21, 0xf8, 0x28, 0xaf, 0x60, 0x6b, 0x4d, 0x3d, 0xba, 0xa1,
+    0x4b, 0x5e, 0x77, 0xef, 0xe7, 0x59, 0x28, 0xfe, 0x1d, 0xc1, 0x27, 0xa2,
+    0xff, 0xa8, 0xde, 0x33, 0x48, 0xb3, 0xc1, 0x85, 0x6a, 0x42, 0x9b, 0xf9,
+    0x7e, 0x7e, 0x31, 0xc2, 0xe5, 0xbd, 0x66, 0x01, 0x18, 0x39, 0x29, 0x6a,
+    0x78, 0x9a, 0x3b, 0xc0, 0x04, 0x5c, 0x8a, 0x5f, 0xb4, 0x2c, 0x7d, 0x1b,
+    0xd9, 0x98, 0xf5, 0x44, 0x49, 0x57, 0x9b, 0x44, 0x68, 0x17, 0xaf, 0xbd,
+    0x17, 0x27, 0x3e, 0x66, 0x2c, 0x97, 0xee, 0x72, 0x99, 0x5e, 0xf4, 0x26,
+    0x40, 0xc5, 0x50, 0xb9, 0x01, 0x3f, 0xad, 0x07, 0x61, 0x35, 0x3c, 0x70,
+    0x86, 0xa2, 0x72, 0xc2, 0x40, 0x88, 0xbe, 0x94, 0x76, 0x9f, 0xd1, 0x66,
+    0x50
+};
+static const unsigned char p521_n[66] = {
+    0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfa, 0x51, 0x86,
+    0x87, 0x83, 0xbf, 0x2f, 0x96, 0x6b, 0x7f, 0xcc, 0x01, 0x48, 0xf7, 0x09,
+    0xa5, 0xd0, 0x3b, 0xb5, 0xc9, 0xb8, 0x89, 0x9c, 0x47, 0xae, 0xbb, 0x6f,
+    0xb7, 0x1e, 0x91, 0x38, 0x64, 0x09
+};
+static const unsigned char c25519_g[32] = {
+    0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+static const unsigned char c25519_n[32] = {
+    0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
+};
 
 static const unsigned char *ot_ec_generator(int curve, size_t *len)
-{ return ec_base()->generator(curve, len); }
+{
+    switch (curve) {
+    case BR_EC_secp256r1: *len = sizeof p256_g; return p256_g;
+    case BR_EC_secp384r1: *len = sizeof p384_g; return p384_g;
+    case BR_EC_secp521r1: *len = sizeof p521_g; return p521_g;
+    case BR_EC_curve25519: *len = sizeof c25519_g; return c25519_g;
+    }
+    *len = 0;
+    return NULL;
+}
+
 static const unsigned char *ot_ec_order(int curve, size_t *len)
-{ return ec_base()->order(curve, len); }
+{
+    switch (curve) {
+    case BR_EC_secp256r1: *len = sizeof p256_n; return p256_n;
+    case BR_EC_secp384r1: *len = sizeof p384_n; return p384_n;
+    case BR_EC_secp521r1: *len = sizeof p521_n; return p521_n;
+    case BR_EC_curve25519: *len = sizeof c25519_n; return c25519_n;
+    }
+    *len = 0;
+    return NULL;
+}
+
 static size_t ot_ec_xoff(int curve, size_t *len)
-{ return ec_base()->xoff(curve, len); }
+{
+    switch (curve) {
+    case BR_EC_secp256r1: *len = 32; return 1;
+    case BR_EC_secp384r1: *len = 48; return 1;
+    case BR_EC_secp521r1: *len = 66; return 1;
+    case BR_EC_curve25519: *len = 32; return 0;
+    }
+    *len = 0;
+    return 0;
+}
+
+static int nist_bits(int curve)
+{
+    return curve == BR_EC_secp256r1 ? 256 : curve == BR_EC_secp384r1 ? 384
+         : curve == BR_EC_secp521r1 ? 521 : 0;
+}
 
 static uint32_t ot_ec_mul(unsigned char *G, size_t Glen, const unsigned char *x, size_t xlen, int curve)
 {
     unsigned char k[32], out[32];
     int rc;
-    if (curve != BR_EC_curve25519) return ec_base()->mul(G, Glen, x, xlen, curve);
+    if (curve != BR_EC_curve25519) {
+        int bits = nist_bits(curve);
+        return bits && g_ecmul(bits, G, Glen, x, xlen);
+    }
     if (Glen != 32 || xlen > 32) return 0;
     memcpy(k, x, xlen);
     memset(k + xlen, 0, 32 - xlen);
@@ -520,7 +713,10 @@ static uint32_t ot_ec_mul(unsigned char *G, size_t Glen, const unsigned char *x,
 static size_t ot_ec_mulgen(unsigned char *R, const unsigned char *x, size_t xlen, int curve)
 {
     unsigned char k[32];
-    if (curve != BR_EC_curve25519) return ec_base()->mulgen(R, x, xlen, curve);
+    if (curve != BR_EC_curve25519) {
+        int bits = nist_bits(curve);
+        return bits ? g_ecmulgen(bits, R, x, xlen) : 0;
+    }
     if (xlen > 32) return 0;
     memcpy(k, x, xlen);
     memset(k + xlen, 0, 32 - xlen);
@@ -529,54 +725,40 @@ static size_t ot_ec_mulgen(unsigned char *R, const unsigned char *x, size_t xlen
     return 32;
 }
 
+/* only BearSSL's own ECDSA verification calls this, and it is not linked:
+ * ours (above) goes to GFOpenCrypto whole */
 static uint32_t ot_ec_muladd(unsigned char *A, const unsigned char *B, size_t len,
                              const unsigned char *x, size_t xlen,
                              const unsigned char *y, size_t ylen, int curve)
-{ return ec_base()->muladd(A, B, len, x, xlen, y, ylen, curve); }
+{
+    (void)A; (void)B; (void)len; (void)x; (void)xlen; (void)y; (void)ylen; (void)curve;
+    return 0;
+}
 
 static const br_ec_impl ot_ec_impl = {
-    (uint32_t)0x23800000,     /* P-256, P-384, P-521 and Curve25519, as br_ec_all_m31 */
+    (uint32_t)0x23800000,     /* P-256, P-384, P-521 and Curve25519 */
     ot_ec_generator, ot_ec_order, ot_ec_xoff, ot_ec_mul, ot_ec_mulgen, ot_ec_muladd
 };
 
-/* ---- the choice ---- */
+/* ---- the choice ----
+ * There is none left: every table is GFOpenCrypto's. offload (no
+ * OTCF_NO_OFFLOAD) no longer changes anything here, since
+ * gfopencrypto.library decides what runs as host code. */
 
 void ot_glue_select(struct ot_impls *m, int offload)
 {
-    ULONG acc = offload ? ot_glue_accelerated() : 0;
-#ifdef OT_GLUE_MASK          /* measuring: leave some operations to BearSSL */
-    acc &= ~(ULONG)(OT_GLUE_MASK);
-#endif
-
-    m->sha256 = (acc & OTACC_HASH) ? &ot_sha256_vtable : &br_sha256_vtable;
-    m->sha384 = (acc & OTACC_HASH) ? &ot_sha384_vtable : &br_sha384_vtable;
-    m->sha512 = (acc & OTACC_HASH) ? &ot_sha512_vtable : &br_sha512_vtable;
-#ifdef OT_LOMUL
-    m->rsa_vrfy = br_rsa_i15_pkcs1_vrfy;
-    m->rsa_pub = br_rsa_i15_public;
-    m->ecdsa_vrfy = br_ecdsa_i15_vrfy_asn1;
-    m->ghash = br_ghash_ctmul32;
-    m->poly1305 = br_poly1305_ctmul32_run;
-#else
-    m->rsa_vrfy = br_rsa_i31_pkcs1_vrfy;
-    m->rsa_pub = br_rsa_i31_public;
-    m->ecdsa_vrfy = br_ecdsa_i31_vrfy_asn1;
-    m->ghash = br_ghash_ctmul;
-    m->poly1305 = br_poly1305_ctmul_run;
-#endif
-    m->ec = ec_base();
-    m->aes_cbcenc = &br_aes_ct_cbcenc_vtable;
-    m->aes_cbcdec = &br_aes_ct_cbcdec_vtable;
-    m->aes_ctr = &br_aes_ct_ctr_vtable;
-    m->chacha20 = br_chacha20_ct_run;
-
-    if (acc & OTACC_RSA) { m->rsa_vrfy = ot_rsa_pkcs1_vrfy; m->rsa_pub = ot_rsa_public; }
-    if (acc & OTACC_ECDSA) m->ecdsa_vrfy = ot_ecdsa_vrfy_asn1;
-    if (acc & OTACC_X25519) m->ec = &ot_ec_impl;
-    if (acc & OTACC_AES) {
-        m->aes_cbcenc = &ot_aes_cbcenc_vtable;
-        m->aes_cbcdec = &ot_aes_cbcdec_vtable;
-        m->aes_ctr = &ot_aes_ctr_vtable;
-    }
-    if (acc & OTACC_CHACHA) { m->chacha20 = ot_chacha20_run; m->poly1305 = ot_poly1305_run; }
+    (void)offload;
+    m->sha256 = &br_sha256_vtable;
+    m->sha384 = &br_sha384_vtable;
+    m->sha512 = &br_sha512_vtable;
+    m->rsa_vrfy = ot_rsa_pkcs1_vrfy;
+    m->rsa_pub = ot_rsa_public;
+    m->ecdsa_vrfy = ot_ecdsa_vrfy_asn1;
+    m->ec = &ot_ec_impl;
+    m->ghash = g_ghash;
+    m->aes_cbcenc = &ot_aes_cbcenc_vtable;
+    m->aes_cbcdec = &ot_aes_cbcdec_vtable;
+    m->aes_ctr = &ot_aes_ctr_vtable;
+    m->chacha20 = ot_chacha20_run;
+    m->poly1305 = ot_poly1305_run;
 }

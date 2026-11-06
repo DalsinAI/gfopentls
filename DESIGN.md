@@ -315,3 +315,66 @@ own `ssl_sha1`).
   the 55/56/63/64-byte edges. `tests/differential.py` checks it against
   Python's hashlib on random lengths. `tests/test_library.c` calls both
   library entries.
+
+## 12. One crypto library: GFOpenTLS 1.4 on GFOpenCrypto 2.3 (6 November 2026)
+
+gfopentls.library carried a second copy of every primitive (BearSSL's,
+about 69 KB) beside gfopencrypto.library's. Now there is one: ours, made
+at least as fast as BearSSL's on a 68040 first.
+
+- **What changed in GFOpenCrypto.** AES is bitsliced (two blocks in eight
+  32-bit words, Boyar and Peralta's S-box circuit, ShiftRows by rotations);
+  SHA-1, SHA-256 and SHA-512 are written out with whole blocks hashed in
+  place; ChaCha20 works on words; GHASH is new (masks from the carry, in
+  assembly); X25519 is on ten 25.5-bit limbs; ECDH on P-256, P-384 and
+  P-521 is new (Renes, Costello and Batina's complete formulas, a 4-bit
+  window read whole, P-256's special reduction and its products in
+  assembly); MD5 is new (RFC 1321, only for TLS 1.0 and 1.1). Everything
+  that touches a secret runs in constant time.
+- **The library** (2.3, revision 3): `OC_MD5Blocks`, `OC_GHASH`,
+  `OC_ECMul`, `OC_ECMulGen` at the end of the table. RSA, ECDSA and the EC
+  calls run on a stack of their own (AllocMem) when the caller's is short,
+  instead of refusing.
+- **GFOpenTLS** (1.4): `ot_glue.c` fills every BearSSL table from
+  GFOpenCrypto and defines the hash names BearSSL's protocol code calls
+  (`br_md5_*`, `br_sha1_*`, `br_sha224/256/384/512_*`) with BearSSL's context
+  layouts and state encodings, so HMAC, the PRFs, the multihash and X.509
+  are unchanged. BearSSL keeps the protocol: the TLS 1.0-1.2 engine, record
+  layers, X.509 parsing, HMAC-DRBG, and two encodings (ECDSA's ASN.1,
+  PKCS #1's signature padding). `build-amiga-tls.sh` fails if any BearSSL
+  hash, cipher, curve, RSA or big-number object is linked. Without
+  gfopencrypto.library 2.3 no connection starts.
+- **Speed** (68040 cost model over vamos's instruction trace: mulu.l 20
+  cycles, a memory operand 1 more, branches 2; per 4 KB, or per
+  operation; ours against BearSSL's):
+
+  | Operation | Ours | BearSSL |
+  | --- | --- | --- |
+  | AES-128 CTR | 963K | 1144K |
+  | AES-128 CBC decrypt | 1495K | 1563K |
+  | SHA-1 | 164K | 202K |
+  | SHA-256 | 403K | 407K |
+  | SHA-384 | 1413K | 1414K |
+  | MD5 | 82K | 107K |
+  | ChaCha20 | 152K | 191K |
+  | GHASH | 1043K | 1690K |
+  | X25519 | 8.45M | 9.15M |
+  | P-256 point multiplication | 19.6M | 25.2M |
+  | ECDSA P-256 verification | 43.8M | 46.3M |
+  | RSA-2048 public operation | 17.4M | 17.7M |
+
+  Poly1305 was already ours and faster (0.77M against 1.46M, Musashi's
+  count). AES before this work took 389M cycles per 4 KB (table-free byte
+  code). On AmiCradle what AC090 runs as host code still does.
+- **Size.** gfopentls.library 190,120 bytes to 120,840; gfopencrypto.library
+  54,868 to 90,392 (the new calls and the written-out code); the two
+  together 36 KB smaller.
+- **Tests.** `test_opentls_units` holds every table to BearSSL's own on
+  random inputs, the hashes against BearSSL's code built under other names
+  (`tests/bearssl_hash_ref.h`), plus GHASH and P-256/384/521 mul and
+  mulgen; `tests/test_tls_local.py` runs every TLS 1.2 and 1.3 case
+  (X25519, P-256, P-384 and P-521 ECDHE, GCM, ChaCha20, CBC with SHA-1,
+  SHA-256 and SHA-384, RSA and ECDSA chains). `tests/test_library.c`
+  calls the new library entries, also with a 6 KB stack.
+- **The 68060 build** keeps the C products (the 68060 traps 32x32->64
+  multiplies); it is not measured here.

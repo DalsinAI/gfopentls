@@ -16,8 +16,9 @@
 #include "bearssl.h"
 
 #define OT_LIB_VERSION   1
-#define OT_LIB_REVISION  3          /* 1.1: OT_GetPeerName; 1.2: S:GFOpenTLS/ca-bundle.pem, ENVARC:GFOpenTLS/certs/;
-                                       1.3: TLS 1.3, OT_SetVersion, OT_SessionHasTicket */
+#define OT_LIB_REVISION  4          /* 1.1: OT_GetPeerName; 1.2: S:GFOpenTLS/ca-bundle.pem, ENVARC:GFOpenTLS/certs/;
+                                       1.3: TLS 1.3, OT_SetVersion, OT_SessionHasTicket;
+                                       1.4: all maths in gfopencrypto.library 2.3, none of BearSSL's */
 
 #define OT_HOST_MAX      255
 #define OT_ALPN_MAX      8          /* protocols offered at once */
@@ -72,6 +73,7 @@ LONG ot_random(void *buf, size_t len);
 /* ---- GFOpenCrypto glue (ot_glue.c) ---- */
 ULONG ot_glue_accelerated(void);        /* OTACC_* */
 void ot_glue_cleanup(void);             /* library expunge */
+int ot_glue_ready(void);               /* gfopencrypto.library 2.3+ is there (Amiga) */
 struct ot_impls {
     const br_hash_class *sha256, *sha384, *sha512;
     br_rsa_pkcs1_vrfy rsa_vrfy;

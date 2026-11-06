@@ -56,10 +56,19 @@ add_executable(opentls_client tests/opentls_client.c)
 target_link_libraries(opentls_client PRIVATE opentls)
 add_executable(opentls_ftps_get tests/opentls_ftps_get.c)
 target_link_libraries(opentls_ftps_get PRIVATE opentls)
+# BearSSL's own hash code under other names (tests/bearssl_hash_ref.h): the
+# reference the unit tests hold ot_glue.c's hashes to, since ot_glue.c now
+# defines BearSSL's hash names over GFOpenCrypto
+add_library(bearssl_hash_ref STATIC
+    third_party/bearssl/src/hash/md5.c third_party/bearssl/src/hash/sha1.c
+    third_party/bearssl/src/hash/sha2small.c third_party/bearssl/src/hash/sha2big.c)
+target_include_directories(bearssl_hash_ref PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bearssl/inc
+                                                    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bearssl/src)
+target_compile_options(bearssl_hash_ref PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/tests/bearssl_hash_ref.h)
 add_executable(test_opentls_units tests/test_opentls_units.c)
 target_include_directories(test_opentls_units PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/opentls
                                                       ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bearssl/src)
-target_link_libraries(test_opentls_units PRIVATE opentls)
+target_link_libraries(test_opentls_units PRIVATE opentls bearssl_hash_ref)
 
 add_executable(test_tls13_vectors tests/test_tls13_vectors.c)
 target_include_directories(test_tls13_vectors PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/opentls

@@ -2,8 +2,7 @@
 # GFOpenTLS for AmigaOS 3.x: gfopentls.library and its Amiga test programs.
 #   STOVE    the stove (default ~/AmiCradle/stoves/os32-gcc16; the GCC 6.5
 #            os32 stove builds it too)
-#   CPU      040 (default: the 68040) or 060 (no 64-bit multiplies:
-#            BearSSL's 15-bit maths, as the 68060 traps them). GCC 16 with
+#   CPU      040 (default: the 68040) or 060. GCC 16 with
 #            -m68060 read the high word of 64-bit values from the wrong stack
 #            slot (found 9 Oct 2026); GFOpenAmigaGCC's gcc patch 0008 fixes it.
 #            CPU=060 with GCC 16 needs a stove built with that patch (its
@@ -11,8 +10,7 @@
 #            ALLOW_GCC16_060=1 (not for shipping); GCC 6.5 (the os32 stove)
 #            is right
 #   OUT      the output directory (default build-amiga-tls)
-#   EXTRA_CFLAGS  more compiler flags (e.g. -DOT_GLUE_MASK=1: measuring
-#            with some operations left to BearSSL; OTACC_* bits)
+#   EXTRA_CFLAGS  more compiler flags
 #   FPCR_CHECK  gfopenrtg's tools/fpcr_check.py, run on the results when
 #               set (the GCC 16 -m68040 FPCR clash; the build uses no FPU)
 # Outputs: lib/gfopentls.library, tests/GFOpenTLSClient, tests/GFOpenTLSFTPSGet,
@@ -30,8 +28,8 @@ AR="$P/bin/m68k-amigaos-ar"
 OUT=${OUT:-"$HERE/build-amiga-tls"}
 BR="$HERE/third_party/bearssl"
 case "${CPU:-040}" in
-    040) CPUFLAGS="-m68040 -specs=$SPECS"; MATH="" ;;
-    060) CPUFLAGS="-m68060"; MATH="-DOT_LOMUL=1" ;;
+    040) CPUFLAGS="-m68040 -specs=$SPECS" ;;
+    060) CPUFLAGS="-m68060" ;;
     *) echo "CPU is 040 or 060 (builds are 68040 only, with a 68060 variant)"; exit 2 ;;
 esac
 
@@ -55,7 +53,7 @@ BASE="$CPUFLAGS -O2 -fno-tree-loop-distribute-patterns -fno-delete-null-pointer-
 # gives both), no x86/POWER code, 32-bit words
 BRDEFS="-DBR_USE_UNIX_TIME=0 -DBR_USE_WIN32_TIME=0 -DBR_USE_URANDOM=0 -DBR_USE_WIN32_RAND=0 \
  -DBR_RDRAND=0 -DBR_AES_X86NI=0 -DBR_SSE2=0 -DBR_POWER8=0 -DBR_INT128=0 -DBR_UMUL128=0 -DBR_64=0 \
- -DBR_LE_UNALIGNED=0 -DBR_BE_UNALIGNED=0 $MATH"
+ -DBR_LE_UNALIGNED=0 -DBR_BE_UNALIGNED=0"
 INC="-I$HERE/include -I$BR/inc -I$BR/src -I$HERE/src/opentls"
 
 # BearSSL, as an archive: the link takes only what the client uses.
@@ -91,6 +89,16 @@ WARN="-Wall -Wextra -Werror -Wno-unused-parameter"
   "$HERE/library/opentls_lib.c" $OTSRC -L"$OUT/lib" -lbearssl68k -lamiga -lgcc \
   -Wl,-Map,"$OUT/lib/gfopentls.library.map"
 echo "$OUT/lib/gfopentls.library ($(wc -c < "$OUT/lib/gfopentls.library") bytes)"
+# All the maths is gfopencrypto.library's (src/opentls/ot_glue.c): no
+# BearSSL hash, cipher, curve, RSA or big-number code may be linked. The
+# two kept are encodings: ECDSA's ASN.1 and PKCS #1's signature padding.
+BRCRYPTO=$(grep -o 'libbearssl68k\.a([a-z0-9_]*\.o)' "$OUT/lib/gfopentls.library.map" | sort -u \
+    | grep -E '\((hash_(md5|sha|ghash|dig|mgf)|symcipher_|aead_|ec_|rsa_|int_|mac_|kdf_)' \
+    | grep -vE '\((ec_ecdsa_atr|rsa_rsa_pkcs1_sig_unpad|mac_hmac|mac_hmac_ct)\.o' || true)
+if [ -n "$BRCRYPTO" ]; then
+    echo "BearSSL crypto linked into gfopentls.library: $BRCRYPTO"
+    exit 1
+fi
 "$P/bin/m68k-amigaos-nm" -u "$OUT/lib/gfopentls.library"
 
 "$CC" $BASE $WARN -Wno-format -I"$HERE/include" -noixemul -o "$OUT/tests/GFOpenTLSClient" \
