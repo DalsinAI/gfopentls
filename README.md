@@ -78,6 +78,26 @@ algorithm, self-signed, fingerprints; `OT_CertAltName()`), and the key
 exchange and MAC names (`OT_GetKeyExchange()`, `OT_GetMAC()`). Client
 only, as before. DESIGN.md section 14.
 
+Link stubs (6 November 2026), for programs that want the C calls and
+not the library bases:
+
+- `-lgfopencrypto` (`lib/libgfopencrypto.a`) serves every `oc_*` call
+  of `<gfopencrypto/gfopencrypto.h>` through gfopencrypto.library 2.4.
+  - It opens the library into `OpenCryptoBase` before `main()`.
+  - The streaming SHA-1, SHA-256 and SHA-512 calls, and `oc_md5`, do
+    their buffering and padding in the stub, over the Blocks calls.
+  - A verification refused for want of stack answers 0.
+  - `oc_emsa_pss_verify`, `oc_keccak_f1600` and `oc_blake2b` have no
+    library call, so they are linked from the sources.
+- `-lgfopentls` (`lib/libgfopentls.a`) opens gfopentls.library 1.5 into
+  `OpenTLSBase`, the base `<proto/gfopentls.h>` uses.
+
+If a library is missing or too old, either stub says so (in the Shell,
+or in a requester from Workbench) and the program ends with RETURN_FAIL
+before `main()`. The stubs hold no floating point, so the same archives
+also go in `lib/soft-float/`. tests/stub_host checks the stub's own code on
+the host, and GFOpenStubTest does the same on the Amiga.
+
 ## Building and testing
 
     cmake -S . -B build && cmake --build build && ctest --test-dir build
@@ -103,8 +123,10 @@ only, as before. DESIGN.md section 14.
     ./build-amiga.sh
         gfopencrypto.library and the Amiga tests (GFOpenCryptoLibTest,
         GFOpenCryptoVectors: the same vectors on the 68k; GFOpenCryptoBench:
-        each call checked and timed), with the os32 GCC 16 stove; 68040
-        code, CPU=060 for the 68060
+        each call checked and timed), the link stubs libgfopencrypto.a and
+        libgfopentls.a (also in lib/soft-float/) and GFOpenStubTest (a
+        program linked with the two stubs alone), with the os32 GCC 16
+        stove; 68040 code, CPU=060 for the 68060
 
 ## Architecture
 
