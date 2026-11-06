@@ -27,6 +27,12 @@ needs, for GFOpenPuTTY first:
 | MD5 | version 2.3 (`OC_MD5Blocks`), RFC 1321, only for TLS 1.0 and 1.1 |
 | GHASH | version 2.3 (`OC_GHASH`), for AES-GCM; constant time |
 | ECDH point multiplication | version 2.3 (`OC_ECMul`, `OC_ECMulGen`), P-256, P-384, P-521; constant time |
+| HMAC-SHA1, HMAC-SHA512, PBKDF2 | version 2.4 (`OC_HMAC_SHA1`, `OC_HMAC_SHA512`, `OC_PBKDF2` over SHA-1/256/384/512), for FileZilla |
+| SHA-3, SHAKE256 | version 2.4 (`OC_SHA3`, `OC_SHA3Init/Update/Final`), FIPS 202: SHA3-256/384/512 |
+| Argon2 | version 2.4 (`OC_Argon2`), RFC 9106, types id, i and d (PuTTY's version 3 key files) |
+| Ed25519 and ECDSA signing, ECDSA keys | version 2.4 (`OC_Ed25519Sign`, `OC_Ed25519PublicKey`, `OC_ECDSASign` with RFC 6979 nonces, `OC_ECKeyGen`); constant time |
+| RSA private operation | version 2.4 (`OC_RSAPrivate`), with the CRT, up to 8192 bits, checked with e before it answers; constant time |
+| Modular exponentiation, prime test | version 2.4 (`OC_ModExp`, constant time, for Diffie-Hellman groups 14-18 and group exchange; `OC_IsProbablePrime`) |
 | AES-128/192/256 | CTR (SSH's SDCTR), CBC, ECB; constant time (bitsliced) |
 | ChaCha20, Poly1305 | the 64-bit nonce form SSH's `chacha20-poly1305@openssh.com` uses |
 

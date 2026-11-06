@@ -6,7 +6,7 @@
 
 #define OPENCRYPTOLIB_NAME "gfopencrypto.library"
 #define OPENCRYPTOLIB_VERSION 2
-#define OPENCRYPTOLIB_REVISION 3
+#define OPENCRYPTOLIB_REVISION 4
 
 struct OCBufferHash {
     const void *data;
@@ -182,6 +182,128 @@ struct OCECMulRequest {
     ULONG point_length;
     const UBYTE *scalar;          /* big-endian */
     ULONG scalar_length;
+};
+
+/* ---- version 2, revision 4 (6 November 2026): for FileZilla ----
+ * HMAC with SHA-1 and SHA-512, PBKDF2, SHA-3 and SHAKE256, Argon2, Ed25519
+ * and ECDSA signing, ECDSA key generation, constant-time modular
+ * exponentiation (Diffie-Hellman), RSA's private operation with the CRT,
+ * and a probable-prime test. All run as 68k code on every machine (no
+ * OCF_ flag), the secret ones in constant time, and like the public-key
+ * calls of revision 3 on a stack of their own when the caller's is short.
+ * <gfopencrypto/gfopencrypto.h> says more about each (oc_hmac, oc_pbkdf2,
+ * oc_sha3_*, oc_argon2, oc_ed25519_sign, oc_ecdsa_sign, oc_ec_keygen,
+ * oc_modexp, oc_rsa_private, oc_is_probable_prime).
+ *
+ * OC_HMAC_SHA1, OC_HMAC_SHA512(struct OCHmacRequest *): out gets 20 or 64
+ * bytes, as OC_HMAC_SHA256 does.
+ * OC_PBKDF2(struct OCPBKDF2Request *): 0, or OCERR_ARGS.
+ * OC_SHA3(struct OCSHA3Request *): one call, ctx unused. OC_SHA3Init,
+ * OC_SHA3Update, OC_SHA3Final: the same request with ctx pointing at the
+ * caller's struct OCSHA3 (init reads variant; update data and length;
+ * final out and out_length). 0, or OCERR_ARGS.
+ * OC_Argon2(struct OCArgon2Request *): the library allocates the memory
+ * (m_kib KB, MEMF_ANY) and frees it; 0, OCERR_ARGS or OCERR_NOMEM.
+ * OC_Ed25519Sign(struct OCEd25519SignRequest *): out gets 64 bytes.
+ * OC_Ed25519PublicKey(struct OCEd25519SignRequest *): out gets 32 bytes
+ * (msg and length unused). Both 0, or OCERR_ARGS.
+ * OC_ECDSASign(struct OCECDSASignRequest *): 0, or OCERR_ARGS.
+ * OC_ECKeyGen(struct OCECKeyGenRequest *): the point's length, or 0.
+ * OC_ModExp(struct OCModExpRequest *): 0, or OCERR_ARGS.
+ * OC_RSAPrivate(struct OCRSAPrivateRequest *): 0, or OCERR_ARGS (also for
+ * a key whose answer does not check out with e).
+ * OC_IsProbablePrime(struct OCPrimeRequest *): 1 probably prime, 0
+ * composite, OCERR_ARGS. */
+#define OCERR_NOMEM (-3)
+
+/* OC_HASH_SHA1 .. OC_HASH_SHA512, OC_SHA3_*, OC_SHAKE256, OC_ARGON2* and
+ * struct OCSHA3 are in <gfopencrypto/gfopencrypto.h> */
+
+struct OCPBKDF2Request {
+    LONG hash;                    /* OC_HASH_SHA1, _SHA256, _SHA384, _SHA512 */
+    const void *password;
+    ULONG password_length;
+    const void *salt;
+    ULONG salt_length;
+    ULONG iterations;             /* 1 or more */
+    UBYTE *out;
+    ULONG out_length;
+};
+
+struct OCSHA3Request {
+    OCSHA3 *ctx;                  /* the caller's (Init, Update, Final); unused by OC_SHA3 */
+    LONG variant;                 /* OC_SHA3_256, _384, _512, OC_SHAKE256 */
+    const void *data;
+    ULONG length;
+    UBYTE *out;
+    ULONG out_length;             /* the digest's size; SHAKE256 any */
+};
+
+struct OCArgon2Request {
+    LONG type;                    /* OC_ARGON2D, OC_ARGON2I, OC_ARGON2ID */
+    UBYTE *out;
+    ULONG out_length;             /* 4 or more */
+    const void *password;
+    ULONG password_length;
+    const void *salt;
+    ULONG salt_length;            /* 8 or more */
+    const void *secret;           /* may be NULL */
+    ULONG secret_length;
+    const void *ad;               /* may be NULL */
+    ULONG ad_length;
+    ULONG passes, m_kib, lanes;   /* t, m (KB, at least 8 * lanes), p */
+};
+
+struct OCEd25519SignRequest {
+    UBYTE *out;                   /* 64 bytes (Sign) or 32 (PublicKey) */
+    const UBYTE *seed;            /* the 32-byte private key */
+    const void *msg;
+    ULONG length;
+};
+
+struct OCECDSASignRequest {
+    LONG curve;                   /* 256, 384 or 521 */
+    UBYTE *r, *s;                 /* (curve + 7) / 8 bytes each, big-endian */
+    const UBYTE *d;               /* the private key, the same size */
+    const UBYTE *hash;
+    ULONG hash_length;            /* 20, 32, 48 or 64: RFC 6979 uses that hash */
+};
+
+struct OCECKeyGenRequest {
+    LONG curve;
+    UBYTE *d;                     /* (curve + 7) / 8 bytes out */
+    UBYTE *point;                 /* 1 + 2 * that out: 04 || x || y */
+    const UBYTE *seed;            /* fresh secret random bytes */
+    ULONG seed_length;            /* at least d's size + 8 */
+};
+
+struct OCModExpRequest {          /* out = base^exponent mod modulus */
+    UBYTE *out;                   /* modulus_length bytes */
+    const UBYTE *base;
+    ULONG base_length;
+    const UBYTE *exponent;
+    ULONG exponent_length;
+    const UBYTE *modulus;         /* odd, up to OC_RSA_MAX_BYTES */
+    ULONG modulus_length;
+};
+
+struct OCRSAPrivateRequest {      /* out = in^d mod n, big-endian */
+    UBYTE *out;                   /* n_length bytes */
+    const UBYTE *in;              /* n_length bytes, below n */
+    const UBYTE *n; ULONG n_length;
+    const UBYTE *e; ULONG e_length;
+    const UBYTE *d; ULONG d_length;
+    const UBYTE *p; ULONG p_length;
+    const UBYTE *q; ULONG q_length;
+    const UBYTE *dp; ULONG dp_length;     /* the last three may be NULL */
+    const UBYTE *dq; ULONG dq_length;
+    const UBYTE *qinv; ULONG qinv_length;
+};
+
+struct OCPrimeRequest {
+    const UBYTE *number;
+    ULONG length;
+    LONG rounds;                  /* 0: 40 */
 };
 
 #endif

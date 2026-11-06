@@ -199,6 +199,117 @@ int oc_emsa_pss_verify(const uint8_t *em, size_t em_length, size_t mod_bits,
 #define OCF_RSA       (1u << 8)
 #define OCF_ECDSA     (1u << 9)
 
+/* ---- for FileZilla's SFTP and FTPS, and its key files (6 November 2026) ---- */
+
+/* The hashes HMAC, PBKDF2 and the rest take by name */
+#define OC_HASH_SHA1   1
+#define OC_HASH_SHA256 2
+#define OC_HASH_SHA384 3
+#define OC_HASH_SHA512 4
+size_t oc_hash_length(int hash);        /* 20, 32, 48, 64; 0 for an unknown hash */
+
+/* HMAC (RFC 2104) with any of the four: out gets oc_hash_length(hash)
+ * bytes. 0, or -1 for an unknown hash or a NULL pointer with a length. */
+int oc_hmac(int hash, const void *key, size_t key_length,
+            const void *data, size_t data_length, uint8_t *out);
+void oc_hmac_sha1(const void *key, size_t key_length,
+                  const void *data, size_t data_length, uint8_t out[OC_SHA1_BYTES]);
+void oc_hmac_sha512(const void *key, size_t key_length,
+                    const void *data, size_t data_length, uint8_t out[OC_SHA512_BYTES]);
+
+/* PBKDF2 (RFC 8018 section 5.2) with HMAC over the hash: out_length bytes
+ * from the password, the salt and iterations (1 or more) rounds. Each round
+ * after the first is two compressions. 0, or -1 for bad arguments. */
+int oc_pbkdf2(int hash, const void *password, size_t password_length,
+              const void *salt, size_t salt_length, uint32_t iterations,
+              void *out, size_t out_length);
+
+/* SHA-3 (FIPS 202): SHA3-256, SHA3-384, SHA3-512 and SHAKE256. Streaming:
+ * init, update as often as wanted, final (which wipes the context). final's
+ * out_length is the digest's size for SHA-3 (32, 48, 64), any number of
+ * bytes for SHAKE256. 0, or -1 for an unknown variant or a wrong length.
+ * oc_keccak_f1600 is the permutation alone, lanes in the host's order. */
+#define OC_SHA3_256 256
+#define OC_SHA3_384 384
+#define OC_SHA3_512 512
+#define OC_SHAKE256 0x10100
+typedef struct OCSHA3 {
+    uint64_t a[25];
+    uint32_t rate, used, out_length;
+    uint8_t domain, pad[3];
+} OCSHA3;
+int oc_sha3_init(OCSHA3 *ctx, int variant);
+void oc_sha3_update(OCSHA3 *ctx, const void *data, size_t length);
+int oc_sha3_final(OCSHA3 *ctx, uint8_t *out, size_t out_length);
+int oc_sha3(int variant, const void *data, size_t length, uint8_t *out, size_t out_length);
+void oc_keccak_f1600(uint64_t state[25]);
+
+/* BLAKE2b (RFC 7693), unkeyed, 1 to 64 bytes out; Argon2's hash */
+int oc_blake2b(uint8_t *out, size_t out_length, const void *data, size_t length);
+
+/* Argon2 (RFC 9106, version 0x13). type: OC_ARGON2D, OC_ARGON2I or
+ * OC_ARGON2ID (PuTTY's key files may name any of them). memory is
+ * oc_argon2_memory(m_kib, lanes) bytes, 8-byte aligned, from the caller
+ * (wiped before the call returns). The salt is 8 bytes or more, m_kib at
+ * least 8 * lanes, out_length 4 or more. 0, or -1 for bad arguments. */
+#define OC_ARGON2D  0
+#define OC_ARGON2I  1
+#define OC_ARGON2ID 2
+size_t oc_argon2_memory(uint32_t m_kib, uint32_t lanes);
+int oc_argon2(int type, uint8_t *out, uint32_t out_length,
+              const void *password, size_t password_length,
+              const void *salt, size_t salt_length,
+              const void *secret, size_t secret_length,
+              const void *ad, size_t ad_length,
+              uint32_t t_cost, uint32_t m_kib, uint32_t lanes, void *memory);
+
+/* Ed25519 (RFC 8032) from the 32-byte private seed: the public key, and a
+ * signature of msg. Constant time. */
+void oc_ed25519_public_key(uint8_t pk[OC_ED25519_PUBLIC_BYTES], const uint8_t seed[32]);
+void oc_ed25519_sign(uint8_t sig[OC_ED25519_SIGNATURE_BYTES], const uint8_t seed[32],
+                     const void *msg, size_t length);
+
+/* ECDSA on P-256, P-384, P-521 (curve = 256, 384, 521). oc_ecdsa_sign: r
+ * and s ((curve + 7) / 8 bytes each, big-endian) for the hash under the
+ * private key d (the same size), the nonce RFC 6979's with the hash that
+ * hash_length names (20 SHA-1, 32 SHA-256, 48 SHA-384, 64 SHA-512); 0, or
+ * -1 for bad arguments or d not in 1 .. n - 1. oc_ec_keygen: d = 1 + seed
+ * mod (n - 1), seed fresh secret random bytes, at least 8 more than d's
+ * size; point = d G (04 || x || y); the point's length, or 0 on failure.
+ * Constant time. */
+int oc_ecdsa_sign(int curve, uint8_t *r, uint8_t *s, const uint8_t *d,
+                  const uint8_t *hash, size_t hash_length);
+int oc_ec_keygen(int curve, uint8_t *d, uint8_t *point, const uint8_t *seed, size_t seed_length);
+
+/* out = base^exponent mod modulus, constant time in the base and the
+ * exponent (every bit of its exponent_length bytes is used), for
+ * Diffie-Hellman groups 14 to 18 and group exchange. The modulus is odd, up
+ * to OC_RSA_MAX_BYTES; out is modulus_length bytes. 0, or -1. */
+int oc_modexp(uint8_t *out, const uint8_t *base, size_t base_length,
+              const uint8_t *exponent, size_t exponent_length,
+              const uint8_t *modulus, size_t modulus_length);
+
+/* RSA's private operation, out = in^d mod n, with the CRT and in constant
+ * time; all big-endian, out and in n_length bytes. dp, dq (d mod p - 1,
+ * q - 1) and qinv (1/q mod p) may be NULL: they are made from d, p and q.
+ * The answer is checked with e before it is given (a fault or a wrong key
+ * gives -1 and zeros, never a bad signature). Padding is the caller's.
+ * 0, or -1. */
+int oc_rsa_private(uint8_t *out, const uint8_t *in,
+                   const uint8_t *n, size_t n_length,
+                   const uint8_t *e, size_t e_length,
+                   const uint8_t *d, size_t d_length,
+                   const uint8_t *p, size_t p_length,
+                   const uint8_t *q, size_t q_length,
+                   const uint8_t *dp, size_t dp_length,
+                   const uint8_t *dq, size_t dq_length,
+                   const uint8_t *qinv, size_t qinv_length);
+
+/* Miller-Rabin after trial division, for public numbers (a group
+ * exchange's prime): base 2, then rounds - 1 bases made from the number's
+ * SHA-512 (rounds 0: 40). 1 probably prime, 0 composite, -1 bad arguments. */
+int oc_is_probable_prime(const uint8_t *number, size_t length, int rounds);
+
 int oc_ct_equal(const void *a, const void *b, size_t length);
 void oc_cleanse(void *p, size_t length);
 

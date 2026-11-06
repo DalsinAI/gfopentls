@@ -42,5 +42,21 @@
 #define OC_GHASH(req) LP1(0xc0, LONG, OC_GHASH, struct OCGHASHRequest *, req, a0, , OPENCRYPTO_BASE_NAME)
 #define OC_ECMul(req) LP1(0xc6, LONG, OC_ECMul, struct OCECMulRequest *, req, a0, , OPENCRYPTO_BASE_NAME)
 #define OC_ECMulGen(req) LP1(0xcc, LONG, OC_ECMulGen, struct OCECMulRequest *, req, a0, , OPENCRYPTO_BASE_NAME)
+/* version 2, revision 4 */
+#define OC_HMAC_SHA1(req) LP1NR(0xd2, OC_HMAC_SHA1, struct OCHmacRequest *, req, a0, , OPENCRYPTO_BASE_NAME)
+#define OC_HMAC_SHA512(req) LP1NR(0xd8, OC_HMAC_SHA512, struct OCHmacRequest *, req, a0, , OPENCRYPTO_BASE_NAME)
+#define OC_PBKDF2(req) LP1(0xde, LONG, OC_PBKDF2, struct OCPBKDF2Request *, req, a0, , OPENCRYPTO_BASE_NAME)
+#define OC_SHA3(req) LP1(0xe4, LONG, OC_SHA3, struct OCSHA3Request *, req, a0, , OPENCRYPTO_BASE_NAME)
+#define OC_SHA3Init(req) LP1(0xea, LONG, OC_SHA3Init, struct OCSHA3Request *, req, a0, , OPENCRYPTO_BASE_NAME)
+#define OC_SHA3Update(req) LP1(0xf0, LONG, OC_SHA3Update, struct OCSHA3Request *, req, a0, , OPENCRYPTO_BASE_NAME)
+#define OC_SHA3Final(req) LP1(0xf6, LONG, OC_SHA3Final, struct OCSHA3Request *, req, a0, , OPENCRYPTO_BASE_NAME)
+#define OC_Argon2(req) LP1(0xfc, LONG, OC_Argon2, struct OCArgon2Request *, req, a0, , OPENCRYPTO_BASE_NAME)
+#define OC_Ed25519Sign(req) LP1(0x102, LONG, OC_Ed25519Sign, struct OCEd25519SignRequest *, req, a0, , OPENCRYPTO_BASE_NAME)
+#define OC_Ed25519PublicKey(req) LP1(0x108, LONG, OC_Ed25519PublicKey, struct OCEd25519SignRequest *, req, a0, , OPENCRYPTO_BASE_NAME)
+#define OC_ECDSASign(req) LP1(0x10e, LONG, OC_ECDSASign, struct OCECDSASignRequest *, req, a0, , OPENCRYPTO_BASE_NAME)
+#define OC_ECKeyGen(req) LP1(0x114, LONG, OC_ECKeyGen, struct OCECKeyGenRequest *, req, a0, , OPENCRYPTO_BASE_NAME)
+#define OC_ModExp(req) LP1(0x11a, LONG, OC_ModExp, struct OCModExpRequest *, req, a0, , OPENCRYPTO_BASE_NAME)
+#define OC_RSAPrivate(req) LP1(0x120, LONG, OC_RSAPrivate, struct OCRSAPrivateRequest *, req, a0, , OPENCRYPTO_BASE_NAME)
+#define OC_IsProbablePrime(req) LP1(0x126, LONG, OC_IsProbablePrime, struct OCPrimeRequest *, req, a0, , OPENCRYPTO_BASE_NAME)
 
 #endif

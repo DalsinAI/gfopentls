@@ -119,6 +119,95 @@ int main(void)
         CHECK(OC_ECMul(&em) == 0);                  /* off the curve */
     }
 
+    /* revision 4: the FileZilla calls, each once (the full vectors are
+     * GFOpenCryptoKeyVectors) */
+    if ((OC_Version() & 0xffff) >= 4) {
+        static UBYTE n[256], seed[40], big[64], pt[65], r[32], s[32];
+        struct OCPBKDF2Request pb;
+        struct OCSHA3Request sr;
+        struct OCArgon2Request ar;
+        struct OCEd25519SignRequest es;
+        struct OCECDSASignRequest ds;
+        struct OCECKeyGenRequest kg;
+        struct OCECDSARequest dv;
+        struct OCModExpRequest me;
+        struct OCPrimeRequest pr;
+        OCSHA3 ctx;
+        UBYTE two = 2, three = 3;
+
+        hmac.key = "key"; hmac.key_length = 3;
+        hmac.data = "The quick brown fox jumps over the lazy dog";
+        hmac.data_length = (ULONG)strlen((const char *)hmac.data);
+        hmac.out = out;
+        OC_HMAC_SHA1(&hmac);
+        CHECK(same_hex(out, 20, "de7c9b85b8b78aa6bc8a7a36f70a90701c9db4d9"));
+        OC_HMAC_SHA512(&hmac);
+        CHECK(same_hex(out, 16, "b42af09057bac1e2d41708e48a902e09"));
+
+        pb.hash = OC_HASH_SHA1; pb.password = "password"; pb.password_length = 8;
+        pb.salt = "salt"; pb.salt_length = 4; pb.iterations = 2; pb.out = out; pb.out_length = 20;
+        CHECK(OC_PBKDF2(&pb) == 0);
+        CHECK(same_hex(out, 20, "ea6c014dc72d6f8ccd1ed92ace1d41f0d8de8957"));
+        pb.iterations = 0;
+        CHECK(OC_PBKDF2(&pb) == OCERR_ARGS);
+
+        sr.ctx = NULL; sr.variant = OC_SHA3_256; sr.data = "abc"; sr.length = 3;
+        sr.out = out; sr.out_length = 32;
+        CHECK(OC_SHA3(&sr) == 0);
+        CHECK(same_hex(out, 32, "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532"));
+        sr.ctx = &ctx; sr.variant = OC_SHAKE256;
+        CHECK(OC_SHA3Init(&sr) == 0);
+        sr.data = ""; sr.length = 0;
+        CHECK(OC_SHA3Update(&sr) == 0);
+        CHECK(OC_SHA3Final(&sr) == 0);
+        CHECK(same_hex(out, 32, "46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762f"));
+
+        memset(big, 1, 32); memset(seed, 2, 16); memset(r, 3, 8); memset(s, 4, 12);
+        ar.type = OC_ARGON2ID; ar.out = out; ar.out_length = 32;
+        ar.password = big; ar.password_length = 32; ar.salt = seed; ar.salt_length = 16;
+        ar.secret = r; ar.secret_length = 8; ar.ad = s; ar.ad_length = 12;
+        ar.passes = 3; ar.m_kib = 32; ar.lanes = 4;
+        CHECK(OC_Argon2(&ar) == 0);
+        CHECK(same_hex(out, 32, "0d640df58d78766c08c037a34a8b53c9d01ef0452d75b65eb52520e96b01e659"));
+
+        for (i = 0; i < 32; ++i) {
+            unsigned v;
+            sscanf("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60" + 2 * i, "%2x", &v);
+            seed[i] = (UBYTE)v;
+        }
+        es.out = big; es.seed = seed; es.msg = ""; es.length = 0;
+        CHECK(OC_Ed25519PublicKey(&es) == 0);
+        CHECK(same_hex(big, 32, "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"));
+        CHECK(OC_Ed25519Sign(&es) == 0);
+        CHECK(same_hex(big, 64, "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"));
+
+        memset(seed, 0x5a, sizeof seed);
+        kg.curve = 256; kg.d = big; kg.point = pt; kg.seed = seed; kg.seed_length = 40;
+        CHECK(OC_ECKeyGen(&kg) == 65);
+        hash.data = "sample"; hash.length = 6; hash.out = out;
+        OC_SHA256(&hash);
+        ds.curve = 256; ds.r = r; ds.s = s; ds.d = big; ds.hash = out; ds.hash_length = 32;
+        CHECK(OC_ECDSASign(&ds) == 0);
+        dv.curve = 256; dv.qx = pt + 1; dv.qy = pt + 33; dv.r = r; dv.s = s;
+        dv.hash = out; dv.hash_length = 32;
+        CHECK(OC_ECDSAVerify(&dv) == 1);
+
+        /* 2^3 mod 2^2048 - 1 ... any odd modulus: 0xff..ff */
+        memset(n, 0xff, sizeof n);
+        me.out = big; me.base = &two; me.base_length = 1; me.exponent = &three;
+        me.exponent_length = 1; me.modulus = n; me.modulus_length = 32;
+        CHECK(OC_ModExp(&me) == 0);
+        CHECK(big[31] == 8 && big[0] == 0);
+
+        pr.number = n; pr.length = 32; pr.rounds = 0;
+        CHECK(OC_IsProbablePrime(&pr) == 0);        /* 2^256 - 1 */
+        n[0] = 0x7f;
+        CHECK(OC_IsProbablePrime(&pr) == 0);
+        two = 0xfb;                                 /* 251 */
+        pr.number = &two; pr.length = 1;
+        CHECK(OC_IsProbablePrime(&pr) == 1);
+    }
+
     hmac.key = "key";
     hmac.key_length = 3;
     hmac.data = "The quick brown fox jumps over the lazy dog";
@@ -140,7 +229,8 @@ int main(void)
     for (i = 0; i < sizeof out; ++i)
         CHECK(out[i] == 0);
 
-    puts("OPENCRYPTOLIB PASS sha256 sha384 sha1 md5 ghash ec-mul hmac ct-cleanse");
+    puts("OPENCRYPTOLIB PASS sha256 sha384 sha1 md5 ghash ec-mul hmac ct-cleanse"
+         " hmac-sha1/512 pbkdf2 sha3 argon2 ed25519-sign ecdsa-sign modexp prime");
 
 done:
     if (OpenCryptoBase)

@@ -1,4 +1,4 @@
-/* gfopencrypto.library 2.2
+/* gfopencrypto.library 2.4
  * Copyright (c) 2026 AmiCradle Team. MIT.
  *
  * Version 2 (8 Oct 2026) adds what SSH needs: X25519, sntrup761, Ed25519,
@@ -13,7 +13,12 @@
  * blocks (TLS 1.0 and 1.1), GHASH (AES-GCM) and point multiplication on
  * P-256, P-384 and P-521 (ECDHE), our own 68k code; and the public-key
  * calls no longer refuse a caller short of stack, they run on one of
- * their own. */
+ * their own.
+ * Revision 4 (6 Nov 2026) adds what FileZilla's SFTP, FTPS and key files
+ * need: HMAC-SHA1/512, PBKDF2, SHA-3, Argon2, Ed25519 and ECDSA signing,
+ * ECDSA keys, constant-time modular exponentiation (Diffie-Hellman), RSA's
+ * private operation with the CRT, and a probable-prime test; our own code,
+ * 68k everywhere. */
 #include <exec/types.h>
 #include <exec/resident.h>
 #include <exec/libraries.h>
@@ -40,11 +45,11 @@ int start(void) { return -1; }
 
 static const char lib_name[] = OPENCRYPTOLIB_NAME;
 static const char lib_id[] =
-    "gfopencrypto.library 2.3 (6.11.2026) GFOpenCrypto, AmiCradle Team\r\n";
+    "gfopencrypto.library 2.4 (6.11.2026) GFOpenCrypto, AmiCradle Team\r\n";
 /* For Version FILE and the Installer: without it, Version only finds the
  * library's version once it is in memory. */
 static const char lib_ver[] __attribute__((used)) =
-    "$VER: gfopencrypto.library 2.3 (6.11.2026) GFOpenCrypto, AmiCradle Team";
+    "$VER: gfopencrypto.library 2.4 (6.11.2026) GFOpenCrypto, AmiCradle Team";
 
 static struct Library *lib_init(REG(d0, struct OpenCryptoLibBase *base),
                                 REG(a0, BPTR seglist),
@@ -85,6 +90,21 @@ DECL(OC_MD5Blocks, struct OCBlocksRequest);
 DECL(OC_GHASH, struct OCGHASHRequest);
 DECL(OC_ECMul, struct OCECMulRequest);
 DECL(OC_ECMulGen, struct OCECMulRequest);
+static void OC_HMAC_SHA1(REG(a0, struct OCHmacRequest *r), REG(a6, struct OpenCryptoLibBase *base));
+static void OC_HMAC_SHA512(REG(a0, struct OCHmacRequest *r), REG(a6, struct OpenCryptoLibBase *base));
+DECL(OC_PBKDF2, struct OCPBKDF2Request);
+DECL(OC_SHA3, struct OCSHA3Request);
+DECL(OC_SHA3Init, struct OCSHA3Request);
+DECL(OC_SHA3Update, struct OCSHA3Request);
+DECL(OC_SHA3Final, struct OCSHA3Request);
+DECL(OC_Argon2, struct OCArgon2Request);
+DECL(OC_Ed25519Sign, struct OCEd25519SignRequest);
+DECL(OC_Ed25519PublicKey, struct OCEd25519SignRequest);
+DECL(OC_ECDSASign, struct OCECDSASignRequest);
+DECL(OC_ECKeyGen, struct OCECKeyGenRequest);
+DECL(OC_ModExp, struct OCModExpRequest);
+DECL(OC_RSAPrivate, struct OCRSAPrivateRequest);
+DECL(OC_IsProbablePrime, struct OCPrimeRequest);
 
 static const APTR lib_vectors[] = {
     (APTR)lib_open, (APTR)lib_close, (APTR)lib_expunge, (APTR)lib_null,
@@ -100,6 +120,11 @@ static const APTR lib_vectors[] = {
     (APTR)OC_RSAPSSVerify,
     (APTR)OC_SHA1, (APTR)OC_SHA1Blocks,
     (APTR)OC_MD5Blocks, (APTR)OC_GHASH, (APTR)OC_ECMul, (APTR)OC_ECMulGen,
+    (APTR)OC_HMAC_SHA1, (APTR)OC_HMAC_SHA512, (APTR)OC_PBKDF2,
+    (APTR)OC_SHA3, (APTR)OC_SHA3Init, (APTR)OC_SHA3Update, (APTR)OC_SHA3Final,
+    (APTR)OC_Argon2, (APTR)OC_Ed25519Sign, (APTR)OC_Ed25519PublicKey,
+    (APTR)OC_ECDSASign, (APTR)OC_ECKeyGen, (APTR)OC_ModExp, (APTR)OC_RSAPrivate,
+    (APTR)OC_IsProbablePrime,
     (APTR)-1
 };
 
@@ -495,4 +520,185 @@ DECL(OC_ECMulGen, struct OCECMulRequest)
     (void)base;
     if (!r || !r->point || !r->scalar) return 0;
     return with_stack(8192, ec_mulgen, r);
+}
+
+/* ---- version 2, revision 4 ---- */
+
+static void OC_HMAC_SHA1(REG(a0, struct OCHmacRequest *r), REG(a6, struct OpenCryptoLibBase *base))
+{
+    (void)base;
+    if (r && r->out && (r->key || !r->key_length) && (r->data || !r->data_length))
+        oc_hmac_sha1(r->key, r->key_length, r->data, r->data_length, r->out);
+}
+
+static void OC_HMAC_SHA512(REG(a0, struct OCHmacRequest *r), REG(a6, struct OpenCryptoLibBase *base))
+{
+    (void)base;
+    if (r && r->out && (r->key || !r->key_length) && (r->data || !r->data_length))
+        oc_hmac_sha512(r->key, r->key_length, r->data, r->data_length, r->out);
+}
+
+DECL(OC_PBKDF2, struct OCPBKDF2Request)
+{
+    (void)base;
+    if (!r) return OCERR_ARGS;
+    return oc_pbkdf2(r->hash, r->password, r->password_length, r->salt, r->salt_length,
+                     r->iterations, r->out, r->out_length) ? OCERR_ARGS : 0;
+}
+
+DECL(OC_SHA3, struct OCSHA3Request)
+{
+    (void)base;
+    if (!r || !r->out || (!r->data && r->length)) return OCERR_ARGS;
+    return oc_sha3(r->variant, r->data, r->length, r->out, r->out_length) ? OCERR_ARGS : 0;
+}
+
+DECL(OC_SHA3Init, struct OCSHA3Request)
+{
+    (void)base;
+    if (!r || !r->ctx) return OCERR_ARGS;
+    return oc_sha3_init(r->ctx, r->variant) ? OCERR_ARGS : 0;
+}
+
+DECL(OC_SHA3Update, struct OCSHA3Request)
+{
+    (void)base;
+    if (!r || !r->ctx || (!r->data && r->length) || !r->ctx->rate) return OCERR_ARGS;
+    oc_sha3_update(r->ctx, r->data, r->length);
+    return 0;
+}
+
+DECL(OC_SHA3Final, struct OCSHA3Request)
+{
+    (void)base;
+    if (!r || !r->ctx || (!r->out && r->out_length) || !r->ctx->rate) return OCERR_ARGS;
+    return oc_sha3_final(r->ctx, r->out, r->out_length) ? OCERR_ARGS : 0;
+}
+
+static LONG argon2(void *a)
+{
+    struct OCArgon2Request *r = a;
+    ULONG size = oc_argon2_memory(r->m_kib, r->lanes);
+    void *mem;
+    LONG rc;
+    if (!size || r->m_kib < 8 * r->lanes) return OCERR_ARGS;
+    mem = AllocMem(size, MEMF_ANY);
+    if (!mem) return OCERR_NOMEM;
+    rc = oc_argon2(r->type, r->out, r->out_length, r->password, r->password_length,
+                   r->salt, r->salt_length, r->secret, r->secret_length,
+                   r->ad, r->ad_length, r->passes, r->m_kib, r->lanes, mem) ? OCERR_ARGS : 0;
+    FreeMem(mem, size);
+    return rc;
+}
+
+DECL(OC_Argon2, struct OCArgon2Request)
+{
+    (void)base;
+    if (!r) return OCERR_ARGS;
+    return with_stack(16384, argon2, r);
+}
+
+static LONG ed_sign(void *a)
+{
+    struct OCEd25519SignRequest *r = a;
+    oc_ed25519_sign(r->out, r->seed, r->msg, r->length);
+    return 0;
+}
+
+static LONG ed_public(void *a)
+{
+    struct OCEd25519SignRequest *r = a;
+    oc_ed25519_public_key(r->out, r->seed);
+    return 0;
+}
+
+DECL(OC_Ed25519Sign, struct OCEd25519SignRequest)
+{
+    (void)base;
+    if (!r || !r->out || !r->seed || (!r->msg && r->length)) return OCERR_ARGS;
+    return with_stack(12288, ed_sign, r);
+}
+
+DECL(OC_Ed25519PublicKey, struct OCEd25519SignRequest)
+{
+    (void)base;
+    if (!r || !r->out || !r->seed) return OCERR_ARGS;
+    return with_stack(12288, ed_public, r);
+}
+
+static LONG ecdsa_sign(void *a)
+{
+    struct OCECDSASignRequest *r = a;
+    return oc_ecdsa_sign(r->curve, r->r, r->s, r->d, r->hash, r->hash_length) ? OCERR_ARGS : 0;
+}
+
+DECL(OC_ECDSASign, struct OCECDSASignRequest)
+{
+    (void)base;
+    if (!r || !r->r || !r->s || !r->d || !r->hash) return OCERR_ARGS;
+    return with_stack(24576, ecdsa_sign, r);
+}
+
+static LONG ec_keygen(void *a)
+{
+    struct OCECKeyGenRequest *r = a;
+    return oc_ec_keygen(r->curve, r->d, r->point, r->seed, r->seed_length);
+}
+
+DECL(OC_ECKeyGen, struct OCECKeyGenRequest)
+{
+    LONG rc;
+    (void)base;
+    if (!r || !r->d || !r->point || !r->seed) return 0;
+    rc = with_stack(16384, ec_keygen, r);
+    return rc < 0 ? 0 : rc;
+}
+
+/* the big-number calls: up to 8192 bits, a table of 16 numbers and the
+ * CRT's halves on the stack */
+#define BN_STACK 65536
+
+static LONG modexp(void *a)
+{
+    struct OCModExpRequest *r = a;
+    return oc_modexp(r->out, r->base, r->base_length, r->exponent, r->exponent_length,
+                     r->modulus, r->modulus_length) ? OCERR_ARGS : 0;
+}
+
+DECL(OC_ModExp, struct OCModExpRequest)
+{
+    (void)base;
+    if (!r || !r->out || !r->modulus || (!r->base && r->base_length)
+        || (!r->exponent && r->exponent_length)) return OCERR_ARGS;
+    return with_stack(BN_STACK, modexp, r);
+}
+
+static LONG rsa_private(void *a)
+{
+    struct OCRSAPrivateRequest *r = a;
+    return oc_rsa_private(r->out, r->in, r->n, r->n_length, r->e, r->e_length,
+                          r->d, r->d_length, r->p, r->p_length, r->q, r->q_length,
+                          r->dp, r->dp_length, r->dq, r->dq_length,
+                          r->qinv, r->qinv_length) ? OCERR_ARGS : 0;
+}
+
+DECL(OC_RSAPrivate, struct OCRSAPrivateRequest)
+{
+    (void)base;
+    if (!r || !r->out || !r->in || !r->n || !r->e || !r->p || !r->q) return OCERR_ARGS;
+    return with_stack(BN_STACK, rsa_private, r);
+}
+
+static LONG is_prime(void *a)
+{
+    struct OCPrimeRequest *r = a;
+    LONG rc = oc_is_probable_prime(r->number, r->length, r->rounds);
+    return rc < 0 ? OCERR_ARGS : rc;
+}
+
+DECL(OC_IsProbablePrime, struct OCPrimeRequest)
+{
+    (void)base;
+    if (!r || !r->number) return OCERR_ARGS;
+    return with_stack(BN_STACK, is_prime, r);
 }

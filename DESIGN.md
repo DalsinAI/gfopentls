@@ -378,3 +378,58 @@ at least as fast as BearSSL's on a 68040 first.
   calls the new library entries, also with a 6 KB stack.
 - **The 68060 build** keeps the C products (the 68060 traps 32x32->64
   multiplies); it is not measured here.
+
+## 13. GFOpenCrypto 2.4: what FileZilla needs (6 November 2026)
+
+FileZilla moves off GnuTLS, Nettle, GMP and libargon2 onto our libraries
+(gfamigafilezilla's LIBRARY-MAP). What its SFTP (fzssh), FTPS and key
+files call and 2.3 lacked is added here; the legacy algorithms (Ed448,
+UMAC, 3DES, Diffie-Hellman group 1) are left out by Dale's decision, so
+FileZilla stops offering them.
+
+- **Code**, all our own from the standards:
+  `src/opencrypto_hmac.c` (HMAC, RFC 2104, over the block functions with
+  the key's inner and outer states made once; PBKDF2, RFC 8018 5.2, whose
+  later rounds are two compressions each), `src/opencrypto_sha3.c`
+  (Keccak-f[1600] and the sponge, FIPS 202), `src/opencrypto_argon2.c`
+  (BLAKE2b, RFC 7693, and Argon2 version 0x13, RFC 9106, lanes filled one
+  after another slice by slice, which gives the same memory),
+  `src/opencrypto_bignum.c` with `src/oc_bn.h` (constant-time big numbers:
+  Montgomery products with the last subtraction by mask, a 4-bit window
+  read whole from its table, bit-serial masked reduction for even moduli),
+  `src/opencrypto_ecdsa_sign.c` (ECDSA signing with RFC 6979's nonce, key
+  generation as 1 + seed mod (n - 1)), and Ed25519 signing at the end of
+  `src/opencrypto_ed25519.c` (the ladder already there, scalars mod L by
+  mask).
+- **RSA private keys.** `oc_rsa_private` takes n, e, d, p, q and, when the
+  key file has them, dp, dq and qinv (OpenSSH and PuTTY files carry d, p,
+  q and iqmp only; the rest is made, in constant time). The answer is
+  raised to e and compared before it is given, so a fault or a mismatched
+  key never leaks a bad signature (the CRT fault attack).
+- **Group exchange primes.** `oc_is_probable_prime`: trial division by the
+  primes below 1000, then Miller-Rabin with base 2 and bases made from
+  SHA-512 of the number itself, so a server cannot build a composite
+  that passes fixed bases.
+- **The library** (2.4, revision 4): fifteen calls at the end of the table,
+  LVOs -210 to -294 (`OC_HMAC_SHA1` ... `OC_IsProbablePrime`), each with a
+  request structure in `<libraries/gfopencrypto.h>`. All 68k code on every
+  machine (no magic ids, so amicradle's AC090 table is unchanged); the
+  signing, key and big-number calls run on a stack of their own (up to
+  64 KB) when the caller's is short. `OC_Argon2` allocates its memory
+  itself (m KB) and answers `OCERR_NOMEM` (-3) when it is not there.
+- **Size.** gfopencrypto.library 90,392 bytes to 127,788 (68040 build,
+  gfopengcc 16.2.0-open6). Nothing that was there before changed: the
+  existing code and its speed are as they were.
+- **Tests.** `tests/test_keys_kdf.c` (ctest `opencrypto_keys_kdf_vectors`,
+  and `GFOpenCryptoKeyVectors` on the Amiga, with times): RFC 2202/4231
+  HMAC, RFC 6070 PBKDF2, FIPS 202 SHA-3 and SHAKE256, RFC 9106's three
+  Argon2 vectors, RFC 8032's Ed25519 tests signed from their seeds, RFC
+  6979's P-256/384/521 "sample" signatures, group 14 exponentiation, a
+  2048-bit RSA key with and without dp/dq/qinv (and a wrong d refused),
+  and the prime test. `tests/differential.py` adds random checks against
+  Python's hashlib and cryptography (OpenSSL): HMAC and PBKDF2 over all
+  four hashes, SHA-3/SHAKE, Argon2id, Ed25519 and deterministic ECDSA
+  signatures byte for byte, key generation, exponentiation up to 8192
+  bits, and RSA private operations from 1024 to 4096 bits.
+  `tests/test_library.c` calls each new library entry.
+
