@@ -1,5 +1,6 @@
 /* GFOpenTLS unit tests: every function table GFOpenCrypto fills in for BearSSL
- * (ot_glue.c) against BearSSL's own, on random inputs; and the address
+ * (ot_glue.c) against BearSSL's own, on random inputs (BearSSL's hashes as
+ * ref_*: ot_glue.c now owns their names); and the address
  * parser, the session rules and the error names.
  * MIT licensed and free. Copyright (c) 2026 AmiCradle Team. */
 #include <stdio.h>
@@ -16,14 +17,20 @@ static br_hmac_drbg_context rng;
 static void rnd(void *p, size_t n) { br_hmac_drbg_generate(&rng, p, n); }
 static size_t rnd_below(size_t n) { uint32_t v; rnd(&v, sizeof v); return n ? v % n : 0; }
 
+extern const br_hash_class ref_md5_vtable, ref_sha1_vtable, ref_sha224_vtable,
+                           ref_sha256_vtable, ref_sha384_vtable, ref_sha512_vtable;
+
 static void test_hashes(const struct ot_impls *m)
 {
-    const br_hash_class *mine[3] = { m->sha256, m->sha384, m->sha512 };
-    const br_hash_class *ref[3] = { &br_sha256_vtable, &br_sha384_vtable, &br_sha512_vtable };
+    const br_hash_class *mine[6] = { &br_md5_vtable, &br_sha1_vtable, &br_sha224_vtable,
+                                     m->sha256, m->sha384, m->sha512 };
+    const br_hash_class *ref[6] = { &ref_md5_vtable, &ref_sha1_vtable, &ref_sha224_vtable,
+                                    &ref_sha256_vtable, &ref_sha384_vtable, &ref_sha512_vtable };
     static unsigned char data[3000];
     int k, round;
-    for (k = 0; k < 3; ++k) {
-        CHECK(mine[k] != ref[k], "GFOpenCrypto hash selected");
+    for (k = 0; k < 6; ++k) {
+        size_t stlen = (ref[k]->desc >> BR_HASHDESC_STATE_OFF) & BR_HASHDESC_STATE_MASK;
+        CHECK(mine[k]->desc == ref[k]->desc && mine[k]->context_size == ref[k]->context_size, "hash class");
         for (round = 0; round < 200; ++round) {
             br_hash_compat_context a, b;
             unsigned char oa[64], ob[64], sa[64], sb[64];
@@ -52,7 +59,7 @@ static void test_hashes(const struct ot_impls *m)
             ref[k]->update(&b.vtable, data, 256);
             ca = mine[k]->state(&a.vtable, sa);
             cb = ref[k]->state(&b.vtable, sb);
-            CHECK(ca == cb && !memcmp(sa, sb, k ? 64 : 32), "hash state");
+            CHECK(ca == cb && !memcmp(sa, sb, stlen), "hash state");
             memset(&a, 0, sizeof a);               /* as BearSSL does: no init first */
             mine[k]->set_state(&a.vtable, sb, cb);
             mine[k]->update(&a.vtable, data, 77);
@@ -122,6 +129,52 @@ static void test_chapol(const struct ot_impls *m)
         m->poly1305(key, iv, a, len, aad, sizeof aad, tga, m->chacha20, enc);
         br_poly1305_ctmul_run(key, iv, b, len, aad, sizeof aad, tgb, br_chacha20_ct_run, enc);
         CHECK(!memcmp(a, b, len) && !memcmp(tga, tgb, 16), "ChaCha20-Poly1305");
+    }
+}
+
+static void test_ghash(const struct ot_impls *m)
+{
+    int round;
+    for (round = 0; round < 200; ++round) {
+        unsigned char h[16], ya[16], yb[16], d[300];
+        size_t len = rnd_below(sizeof d + 1);
+        rnd(h, 16); rnd(ya, 16); rnd(d, len);
+        memcpy(yb, ya, 16);
+        m->ghash(ya, h, d, len);
+        br_ghash_ctmul(yb, h, d, len);
+        CHECK(!memcmp(ya, yb, 16), "GHASH");
+    }
+}
+
+/* P-256, P-384, P-521: the generator, order and x offset, and mul and
+ * mulgen against BearSSL's */
+static void test_ec_nist(const struct ot_impls *m)
+{
+    static const int curves[3] = { BR_EC_secp256r1, BR_EC_secp384r1, BR_EC_secp521r1 };
+    int k, round;
+    for (k = 0; k < 3; ++k) {
+        const br_ec_impl *b = &br_ec_all_m31;
+        size_t gl, gl2, ol, ol2, xl, xl2;
+        const unsigned char *g = m->ec->generator(curves[k], &gl), *o = m->ec->order(curves[k], &ol);
+        const unsigned char *g2 = b->generator(curves[k], &gl2), *o2 = b->order(curves[k], &ol2);
+        CHECK(gl == gl2 && !memcmp(g, g2, gl) && ol == ol2 && !memcmp(o, o2, ol)
+              && m->ec->xoff(curves[k], &xl) == b->xoff(curves[k], &xl2) && xl == xl2, "EC curve constants");
+        for (round = 0; round < 4; ++round) {
+            unsigned char ka[66], pa[133], pb[133], qa[133], qb[133];
+            rnd(ka, ol);
+            ka[0] &= 0x7f;                     /* below the order, as BearSSL's keys are */
+            ka[ol - 1] |= 1;
+            CHECK(m->ec->mulgen(pa, ka, ol, curves[k]) == gl && b->mulgen(pb, ka, ol, curves[k]) == gl
+                  && !memcmp(pa, pb, gl), "EC mulgen");
+            rnd(ka, ol);
+            ka[0] &= 0x7f;
+            memcpy(qa, pb, gl);
+            memcpy(qb, pb, gl);
+            CHECK(m->ec->mul(qa, gl, ka, ol, curves[k]) == 1 && b->mul(qb, gl, ka, ol, curves[k]) == 1
+                  && !memcmp(qa, qb, gl), "EC mul");
+            qa[gl - 1] ^= 1;                   /* off the curve */
+            CHECK(m->ec->mul(qa, gl, ka, ol, curves[k]) == 0, "EC mul refuses a bad point");
+        }
     }
 }
 
@@ -311,11 +364,14 @@ int main(void)
     br_hmac_drbg_init(&rng, &br_sha256_vtable, seed, sizeof seed);
     ot_glue_select(&m, 1);
     ot_glue_select(&plain, 0);
-    CHECK(plain.sha256 == &br_sha256_vtable && plain.chacha20 == br_chacha20_ct_run, "no offload: BearSSL's own");
+    CHECK(!memcmp(&m, &plain, sizeof m) && m.sha256 == &br_sha256_vtable
+          && m.chacha20 != br_chacha20_ct_run, "GFOpenCrypto's, offload or not");
     test_hashes(&m);
     test_aes(&m);
     test_chapol(&m);
+    test_ghash(&m);
     test_x25519(&m);
+    test_ec_nist(&m);
     test_rsa(&m);
     test_ecdsa(&m);
     test_api();

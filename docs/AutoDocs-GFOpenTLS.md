@@ -16,6 +16,13 @@ Since revision 3 (gfopentls.library 1.3) the library speaks TLS 1.3 and TLS
 and a server that answers with TLS 1.2 goes on over the same connection.
 `OT_SetVersion()` sets the range of one connection.
 
+Since revision 4 (gfopentls.library 1.4) every hash, cipher and public-key
+operation is gfopencrypto.library's, which must be version 2.3 or newer:
+without it no connection starts (`OTERR_UNSUPPORTED`, "gfopencrypto.library
+2.3 or newer is needed.") and `OT_Random()` answers `OTERR_RANDOM`.
+`OTCF_NO_OFFLOAD` no longer changes anything; gfopencrypto.library decides
+what runs as host code.
+
 ## Conventions
 
 - Calls that answer a `LONG` answer `OTERR_OK` (0) or a count or length
@@ -37,6 +44,8 @@ and a server that answers with TLS 1.2 goes on over the same connection.
   session holds the server's ticket (2 KB at most; longer ones are not
   kept).
 - Stack: a handshake needs at least 16 KB of the calling task's stack free.
+  Since 1.4 the RSA and elliptic-curve work runs on a stack of
+  gfopencrypto.library's own when the caller's is short.
 
 ## Error codes
 
@@ -115,7 +124,7 @@ may be NULL for the defaults; otherwise set `config->Size` to
 `sizeof(struct OTContextConfig)` and zero what you do not use.
 
 - `Flags`: `OTCF_NO_SYSTEM_TRUST` (trust only `CAFile` and `OT_AddTrust*()`),
-  `OTCF_NO_OFFLOAD` (do every operation as 68k code, for measuring),
+  `OTCF_NO_OFFLOAD` (before 1.4: every operation as 68k code; now no effect),
   `OTCF_SMALL_BUFFERS`.
 - `MinVersion`, `MaxVersion`: `OT_TLS10` to `OT_TLS13`; 0 means TLS 1.2 and
   the highest the library has (TLS 1.3 since revision 3). A range the

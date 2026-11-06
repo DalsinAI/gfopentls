@@ -82,6 +82,12 @@ void oc_sha1_final(OCSHA1 *ctx, uint8_t out[OC_SHA1_BYTES]);
 void oc_sha1(const void *data, size_t length, uint8_t out[OC_SHA1_BYTES]);
 void oc_sha1_blocks(uint8_t state[OC_SHA1_BYTES], const void *data, size_t nblocks);
 
+/* MD5 (RFC 1321), only for what still names it (TLS 1.0 and 1.1); the
+ * block function keeps the 16-byte chaining value little-endian */
+#define OC_MD5_BYTES 16
+void oc_md5(const void *data, size_t length, uint8_t out[OC_MD5_BYTES]);
+void oc_md5_blocks(uint8_t state[OC_MD5_BYTES], const void *data, size_t nblocks);
+
 /* ---- for SSH's key exchanges, host keys and default cipher (8 Oct 2026) ---- */
 
 #define OC_SEED_BYTES 32
@@ -120,6 +126,9 @@ void oc_sntrup761_dec(uint8_t ss[OC_SNTRUP761_SS_BYTES], const uint8_t ct[OC_SNT
 void oc_chacha20_xor(uint8_t *out, const uint8_t *in, size_t length,
                      const uint8_t key[32], const uint8_t nonce[8], uint64_t counter);
 void oc_poly1305(uint8_t tag[16], const void *data, size_t length, const uint8_t key[32]);
+/* GHASH (NIST SP 800-38D 6.4), AES-GCM's hash: y = (y + X_i) . h for each
+ * 16-byte part of the data (the last padded with zeros), constant time */
+void oc_ghash(uint8_t y[16], const uint8_t h[16], const void *data, size_t length);
 /* length bytes from a seed: ChaCha20's key stream, the label as nonce */
 void oc_expand_seed(uint8_t *out, size_t length, const uint8_t seed[OC_SEED_BYTES],
                     const char label[8]);
@@ -149,6 +158,16 @@ int oc_rsa_public(uint8_t *out, const uint8_t *sig, const uint8_t *n, size_t n_l
 int oc_ecdsa_verify(int curve, const uint8_t *qx, const uint8_t *qy,
                     const uint8_t *r, const uint8_t *s,
                     const uint8_t *hash, size_t hash_length);
+
+/* ECDH on P-256, P-384 and P-521 (curve = 256, 384, 521), constant time:
+ * oc_ec_mul() sets point (X9.62 uncompressed, 04 || x || y, 1 + 2 bytes
+ * of the curve's size) to scalar . point, after checking the point is on
+ * the curve; 1, or 0 for a bad point, curve or result. oc_ec_mulgen()
+ * writes scalar . G there and returns its length (0 on failure). The
+ * scalar is big-endian, any length. */
+int oc_ec_mul(int curve, uint8_t *point, size_t point_length,
+              const uint8_t *scalar, size_t scalar_length);
+int oc_ec_mulgen(int curve, uint8_t *point, const uint8_t *scalar, size_t scalar_length);
 
 /* RSASSA-PSS verification (RFC 8017 section 8.1.2), as TLS 1.3 uses it
  * (rsa_pss_rsae_*): MGF1 with the message's own hash, which hash_length

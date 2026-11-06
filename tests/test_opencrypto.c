@@ -61,6 +61,13 @@ static int check_sha1_routes(const char *msg)
     return !memcmp(one, inc, 20) && !memcmp(one, blk, 20);
 }
 
+static int check_md5(const char *msg, const char *want_hex)
+{
+    uint8_t got[16], want[16];
+    oc_md5(msg, strlen(msg), got);
+    return hex(want, sizeof want, want_hex) && oc_ct_equal(got, want, sizeof got);
+}
+
 static int check_sha384(const char *msg, const char *want_hex)
 {
     uint8_t got[48], want[48];
@@ -137,6 +144,15 @@ int main(void)
                 return 16;
     }
 
+    /* MD5: RFC 1321's test suite (A.5) */
+    if (!check_md5("", "d41d8cd98f00b204e9800998ecf8427e")
+        || !check_md5("abc", "900150983cd24fb0d6963f7d28e17f72")
+        || !check_md5("message digest", "f96b697d7cb7938d525a2f31aaf161d0")
+        || !check_md5("abcdefghijklmnopqrstuvwxyz", "c3fcd3d76192e4007dfb496cca67e13b")
+        || !check_md5("12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+                      "57edf4a22be3c955ac49da2e2107b67a"))
+        return 17;
+
     oc_hmac_sha256("key", 3, fox, strlen(fox), got);
     if (!hex(want, 32, "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8")
         || !oc_ct_equal(got, want, 32))
@@ -168,11 +184,32 @@ int main(void)
         || !oc_ct_equal(got, want, 42))
         return 10;
 
+    /* AES-GCM from oc_aes and oc_ghash: the GCM paper's (McGrew and Viega,
+     * 2005) test case 2: key, IV and plaintext all zeros */
+    {
+        uint8_t key[16] = { 0 }, j0[16] = { 0 }, h[16] = { 0 }, y[16] = { 0 };
+        uint8_t c[16] = { 0 }, s[16] = { 0 }, lens[16] = { 0 };
+        int i;
+        oc_aes(h, 16, key, 16, j0, OC_AES_ECB_ENCRYPT);      /* H = E(K, 0) */
+        j0[15] = 2;
+        oc_aes(c, 16, key, 16, j0, OC_AES_CTR);              /* C = P + E(K, inc32(J0)) */
+        if (!hex(want, 16, "0388dace60b6a392f328c2b971b2fe78") || !oc_ct_equal(c, want, 16))
+            return 15;
+        lens[15] = 0x80;                                     /* len(A) 0, len(C) 128 bits */
+        oc_ghash(y, h, c, 16);
+        oc_ghash(y, h, lens, 16);
+        j0[15] = 1;
+        oc_aes(s, 16, key, 16, j0, OC_AES_CTR);              /* T = E(K, J0) + GHASH */
+        for (i = 0; i < 16; ++i) s[i] ^= y[i];
+        if (!hex(want, 16, "ab6e47d42cec13bdf53a67b21257bddf") || !oc_ct_equal(s, want, 16))
+            return 16;
+    }
+
     got[0] = 0xaa;
     oc_cleanse(got, sizeof got);
     for (size_t i = 0; i < sizeof got; ++i)
         if (got[i]) return 11;
 
-    puts("OPENCRYPTO PASS sha1 sha256 sha384 sha512 hmac hkdf ct-cleanse");
+    puts("OPENCRYPTO PASS md5 sha1 sha256 sha384 sha512 hmac hkdf aes-gcm ct-cleanse");
     return 0;
 }

@@ -76,7 +76,7 @@
 
 /* struct OTContextConfig Flags. */
 #define OTCF_NO_SYSTEM_TRUST  (1UL << 0)  /* only CAFile and OT_AddTrust*() */
-#define OTCF_NO_OFFLOAD       (1UL << 1)  /* all maths as 68k code (measuring) */
+#define OTCF_NO_OFFLOAD       (1UL << 1)  /* since 1.4 no effect: gfopencrypto.library decides */
 #define OTCF_SMALL_BUFFERS    (1UL << 2)  /* ~17 KB per connection, not ~33 KB */
 
 struct OTContextConfig {

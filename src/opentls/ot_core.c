@@ -719,6 +719,8 @@ static LONG start_handshake(struct OTConnection *c)
      * certificate, so that the caller can show it and offer to trust it
      * (OT_GetPeerFingerprint, OT_GetPeerName); it then fails with
      * OTERR_TRUSTSTORE unless the certificate is pinned. */
+    if (!ot_glue_ready())
+        return ot_fail(c, OTERR_UNSUPPORTED, 0, "gfopencrypto.library 2.3 or newer is needed.", NULL, NULL);
     if (need_trust) merged_anchors(x, &ta, &ta_count);
     ot_glue_select(&c->impls, !(x->flags & OTCF_NO_OFFLOAD));
     ot_x509_init(&c->x509, c, &c->impls, ta, ta_count);

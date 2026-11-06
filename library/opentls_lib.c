@@ -1,6 +1,6 @@
-/* gfopentls.library 1.3: a TLS client for AmigaOS 3.x, on BearSSL
- * (third_party/bearssl, MIT) with GFOpenCrypto doing the maths that the x86
- * or ARM64 cores can do on AmiCradle (src/opentls/ot_glue.c).
+/* gfopentls.library 1.4: a TLS client for AmigaOS 3.x, on BearSSL's
+ * protocol code (third_party/bearssl, MIT) with GFOpenCrypto doing all the
+ * maths through gfopencrypto.library 2.3 or newer (src/opentls/ot_glue.c).
  * docs/AutoDocs-GFOpenTLS.md is the contract.
  * MIT licensed and free. Copyright (c) 2026 AmiCradle Team. */
 #include <exec/types.h>
@@ -29,11 +29,11 @@ int start(void) { return -1; }
 
 static const char lib_name[] = OPENTLSLIB_NAME;
 static const char lib_id[] =
-    "gfopentls.library 1.3 (20.10.2026) GFOpenTLS on BearSSL, AmiCradle Team\r\n";
+    "gfopentls.library 1.4 (6.11.2026) GFOpenTLS, AmiCradle Team\r\n";
 /* For Version FILE and the Installer: without it, Version only finds the
  * library's version once it is in memory. */
 static const char lib_ver[] __attribute__((used)) =
-    "$VER: gfopentls.library 1.3 (20.10.2026) GFOpenTLS on BearSSL, AmiCradle Team";
+    "$VER: gfopentls.library 1.4 (6.11.2026) GFOpenTLS, AmiCradle Team";
 
 static struct Library *lib_init(REG(d0, struct OpenTLSLibBase *base),
                                 REG(a0, BPTR seglist),

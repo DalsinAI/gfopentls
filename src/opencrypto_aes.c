@@ -1,208 +1,422 @@
 /* GFOpenCrypto: AES-128, -192 and -256 (FIPS 197) in CTR (SSH's SDCTR), CBC
- * and ECB, constant time.
+ * and ECB, constant time, bit-sliced for 32-bit registers.
  * Copyright (c) 2026 AmiCradle Team. MIT.
  *
- * The S-box is read without a secret index: every lookup reads all 256
- * entries and keeps the one it wants by mask, sixteen state bytes in one
- * pass. That is slow as 68k code (a few kilobytes a second on a 68030), and
- * it is the fallback only: AC090's host code runs AES with the host's AES
- * instructions, and GFOpenPuTTY on a real Amiga keeps PuTTY's own bit-sliced
- * AES unless asked otherwise. */
+ * Two blocks go through the rounds together, as eight 32-bit words: word i
+ * holds bit i of all 32 state bytes, byte (row r, column c) of block b at
+ * bit 8 (3 - r) + 2 c + b (columns load as big-endian words). SubBytes is then a Boolean circuit over the eight words
+ * (Boyar and Peralta, "A depth-16 circuit for the AES S-box", 2012: 113
+ * gates), ShiftRows a rotation inside each row's eight bits and MixColumns
+ * rotations of whole words by a row, with no table and no secret index or
+ * branch anywhere. The key schedule runs its S-box lookups through the same
+ * circuit. */
 #include "gfopencrypto/gfopencrypto.h"
 
 #include <string.h>
 
-static const uint8_t sbox[256] = {
-    0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,
-    0xca,0x82,0xc9,0x7d,0xfa,0x59,0x47,0xf0,0xad,0xd4,0xa2,0xaf,0x9c,0xa4,0x72,0xc0,
-    0xb7,0xfd,0x93,0x26,0x36,0x3f,0xf7,0xcc,0x34,0xa5,0xe5,0xf1,0x71,0xd8,0x31,0x15,
-    0x04,0xc7,0x23,0xc3,0x18,0x96,0x05,0x9a,0x07,0x12,0x80,0xe2,0xeb,0x27,0xb2,0x75,
-    0x09,0x83,0x2c,0x1a,0x1b,0x6e,0x5a,0xa0,0x52,0x3b,0xd6,0xb3,0x29,0xe3,0x2f,0x84,
-    0x53,0xd1,0x00,0xed,0x20,0xfc,0xb1,0x5b,0x6a,0xcb,0xbe,0x39,0x4a,0x4c,0x58,0xcf,
-    0xd0,0xef,0xaa,0xfb,0x43,0x4d,0x33,0x85,0x45,0xf9,0x02,0x7f,0x50,0x3c,0x9f,0xa8,
-    0x51,0xa3,0x40,0x8f,0x92,0x9d,0x38,0xf5,0xbc,0xb6,0xda,0x21,0x10,0xff,0xf3,0xd2,
-    0xcd,0x0c,0x13,0xec,0x5f,0x97,0x44,0x17,0xc4,0xa7,0x7e,0x3d,0x64,0x5d,0x19,0x73,
-    0x60,0x81,0x4f,0xdc,0x22,0x2a,0x90,0x88,0x46,0xee,0xb8,0x14,0xde,0x5e,0x0b,0xdb,
-    0xe0,0x32,0x3a,0x0a,0x49,0x06,0x24,0x5c,0xc2,0xd3,0xac,0x62,0x91,0x95,0xe4,0x79,
-    0xe7,0xc8,0x37,0x6d,0x8d,0xd5,0x4e,0xa9,0x6c,0x56,0xf4,0xea,0x65,0x7a,0xae,0x08,
-    0xba,0x78,0x25,0x2e,0x1c,0xa6,0xb4,0xc6,0xe8,0xdd,0x74,0x1f,0x4b,0xbd,0x8b,0x8a,
-    0x70,0x3e,0xb5,0x66,0x48,0x03,0xf6,0x0e,0x61,0x35,0x57,0xb9,0x86,0xc1,0x1d,0x9e,
-    0xe1,0xf8,0x98,0x11,0x69,0xd9,0x8e,0x94,0x9b,0x1e,0x87,0xe9,0xce,0x55,0x28,0xdf,
-    0x8c,0xa1,0x89,0x0d,0xbf,0xe6,0x42,0x68,0x41,0x99,0x2d,0x0f,0xb0,0x54,0xbb,0x16
-};
-static const uint8_t inv_sbox[256] = {
-    0x52,0x09,0x6a,0xd5,0x30,0x36,0xa5,0x38,0xbf,0x40,0xa3,0x9e,0x81,0xf3,0xd7,0xfb,
-    0x7c,0xe3,0x39,0x82,0x9b,0x2f,0xff,0x87,0x34,0x8e,0x43,0x44,0xc4,0xde,0xe9,0xcb,
-    0x54,0x7b,0x94,0x32,0xa6,0xc2,0x23,0x3d,0xee,0x4c,0x95,0x0b,0x42,0xfa,0xc3,0x4e,
-    0x08,0x2e,0xa1,0x66,0x28,0xd9,0x24,0xb2,0x76,0x5b,0xa2,0x49,0x6d,0x8b,0xd1,0x25,
-    0x72,0xf8,0xf6,0x64,0x86,0x68,0x98,0x16,0xd4,0xa4,0x5c,0xcc,0x5d,0x65,0xb6,0x92,
-    0x6c,0x70,0x48,0x50,0xfd,0xed,0xb9,0xda,0x5e,0x15,0x46,0x57,0xa7,0x8d,0x9d,0x84,
-    0x90,0xd8,0xab,0x00,0x8c,0xbc,0xd3,0x0a,0xf7,0xe4,0x58,0x05,0xb8,0xb3,0x45,0x06,
-    0xd0,0x2c,0x1e,0x8f,0xca,0x3f,0x0f,0x02,0xc1,0xaf,0xbd,0x03,0x01,0x13,0x8a,0x6b,
-    0x3a,0x91,0x11,0x41,0x4f,0x67,0xdc,0xea,0x97,0xf2,0xcf,0xce,0xf0,0xb4,0xe6,0x73,
-    0x96,0xac,0x74,0x22,0xe7,0xad,0x35,0x85,0xe2,0xf9,0x37,0xe8,0x1c,0x75,0xdf,0x6e,
-    0x47,0xf1,0x1a,0x71,0x1d,0x29,0xc5,0x89,0x6f,0xb7,0x62,0x0e,0xaa,0x18,0xbe,0x1b,
-    0xfc,0x56,0x3e,0x4b,0xc6,0xd2,0x79,0x20,0x9a,0xdb,0xc0,0xfe,0x78,0xcd,0x5a,0xf4,
-    0x1f,0xdd,0xa8,0x33,0x88,0x07,0xc7,0x31,0xb1,0x12,0x10,0x59,0x27,0x80,0xec,0x5f,
-    0x60,0x51,0x7f,0xa9,0x19,0xb5,0x4a,0x0d,0x2d,0xe5,0x7a,0x9f,0x93,0xc9,0x9c,0xef,
-    0xa0,0xe0,0x3b,0x4d,0xae,0x2a,0xf5,0xb0,0xc8,0xeb,0xbb,0x3c,0x83,0x53,0x99,0x61,
-    0x17,0x2b,0x04,0x7e,0xba,0x77,0xd6,0x26,0xe1,0x69,0x14,0x63,0x55,0x21,0x0c,0x7d
-};
+typedef uint32_t W;
 
-/* out[j] = table[in[j]] for n bytes, reading all of the table */
-static void ct_lookup(uint8_t *out, const uint8_t *in, int n, const uint8_t *table)
+/* a word move for an even address where words are big-endian (the 68k) */
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define WORD_OK(p) (!((uintptr_t)(p) & 1))
+#else
+#define WORD_OK(p) 0
+#endif
+
+#define SWAPMOVE(a, b, m, n) do { W t_ = (((a) >> (n)) ^ (b)) & (m); (b) ^= t_; (a) ^= t_ << (n); } while (0)
+
+/* q[2 c + b] = column c of block b, big-endian (row r in bits 24 - 8 r..):
+ * out, q[i] = bit i of every byte. Its own inverse. */
+static void transpose(W q[8])
 {
-    uint8_t acc[16];
-    int i, j;
-    for (j = 0; j < n; ++j) acc[j] = 0;
-    for (i = 0; i < 256; ++i) {
-        uint8_t t = table[i];
-        for (j = 0; j < n; ++j) {
-            uint32_t d = (uint32_t)(in[j] ^ i);             /* 0 when it is the one */
-            uint8_t mask = (uint8_t)((d - 1) >> 8);         /* 0xff when d == 0 */
-            acc[j] |= t & mask;
-        }
+    SWAPMOVE(q[0], q[1], 0x55555555u, 1);
+    SWAPMOVE(q[2], q[3], 0x55555555u, 1);
+    SWAPMOVE(q[4], q[5], 0x55555555u, 1);
+    SWAPMOVE(q[6], q[7], 0x55555555u, 1);
+    SWAPMOVE(q[0], q[2], 0x33333333u, 2);
+    SWAPMOVE(q[1], q[3], 0x33333333u, 2);
+    SWAPMOVE(q[4], q[6], 0x33333333u, 2);
+    SWAPMOVE(q[5], q[7], 0x33333333u, 2);
+    SWAPMOVE(q[0], q[4], 0x0f0f0f0fu, 4);
+    SWAPMOVE(q[1], q[5], 0x0f0f0f0fu, 4);
+    SWAPMOVE(q[2], q[6], 0x0f0f0f0fu, 4);
+    SWAPMOVE(q[3], q[7], 0x0f0f0f0fu, 4);
+}
+
+static W be32(const uint8_t *p)
+{
+    if (WORD_OK(p)) return *(const W *)(const void *)p;
+    return (W)p[0] << 24 | (W)p[1] << 16 | (W)p[2] << 8 | (W)p[3];
+}
+
+static void put_be32(uint8_t *p, W v)
+{
+    if (WORD_OK(p)) { *(W *)(void *)p = v; return; }
+    p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16); p[2] = (uint8_t)(v >> 8); p[3] = (uint8_t)v;
+}
+
+/* two blocks (b1 may equal b0) into the sliced state */
+static void load2(W q[8], const uint8_t *b0, const uint8_t *b1)
+{
+    int c;
+    for (c = 0; c < 4; ++c) {
+        q[2 * c] = be32(b0 + 4 * c);
+        q[2 * c + 1] = be32(b1 + 4 * c);
     }
-    for (j = 0; j < n; ++j) out[j] = acc[j];
+    transpose(q);
 }
 
-static uint8_t xtime(uint8_t x)
+static void store2(uint8_t *b0, uint8_t *b1, const W s[8])
 {
-    return (uint8_t)((x << 1) ^ (0x1b & -(x >> 7)));
+    W q[8];
+    int c;
+    memcpy(q, s, sizeof q);
+    transpose(q);
+    for (c = 0; c < 4; ++c) {
+        put_be32(b0 + 4 * c, q[2 * c]);
+        if (b1) put_be32(b1 + 4 * c, q[2 * c + 1]);
+    }
 }
 
-/* the round keys: 4 (Nr + 1) words, as bytes; Nr returned (0: bad length) */
-static int expand_key(uint8_t rk[240], const uint8_t *key, size_t keylen)
+/* SubBytes on all 32 bytes: the circuit's inputs U0..U7 are bits 7..0 */
+static void sub_bytes(W q[8])
 {
+    W u0 = q[7], u1 = q[6], u2 = q[5], u3 = q[4], u4 = q[3], u5 = q[2], u6 = q[1], u7 = q[0];
+    W t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19;
+    W t20, t21, t22, t23, t24, t25, t26, t27;
+    W m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12, m13, m14, m15, m16, m17, m18, m19;
+    W m20, m21, m22, m23, m24, m25, m26, m27, m28, m29, m30, m31, m32, m33, m34, m35, m36;
+    W m37, m38, m39, m40, m41, m42, m43, m44, m45, m46, m47, m48, m49, m50, m51, m52, m53;
+    W m54, m55, m56, m57, m58, m59, m60, m61, m62, m63;
+    W l0, l1, l2, l3, l4, l5, l6, l7, l8, l9, l10, l11, l12, l13, l14, l15, l16, l17, l18;
+    W l19, l20, l21, l22, l23, l24, l25, l26, l27, l28, l29;
+
+    /* top linear layer */
+    t1 = u0 ^ u3; t2 = u0 ^ u5; t3 = u0 ^ u6; t4 = u3 ^ u5; t5 = u4 ^ u6;
+    t6 = t1 ^ t5; t7 = u1 ^ u2; t8 = u7 ^ t6; t9 = u7 ^ t7; t10 = t6 ^ t7;
+    t11 = u1 ^ u5; t12 = u2 ^ u5; t13 = t3 ^ t4; t14 = t6 ^ t11; t15 = t5 ^ t11;
+    t16 = t5 ^ t12; t17 = t9 ^ t16; t18 = u3 ^ u7; t19 = t7 ^ t18; t20 = t1 ^ t19;
+    t21 = u6 ^ u7; t22 = t7 ^ t21; t23 = t2 ^ t22; t24 = t2 ^ t10; t25 = t20 ^ t17;
+    t26 = t3 ^ t16; t27 = t1 ^ t12;
+
+    /* middle: the inversion in GF(2^8) */
+    m1 = t13 & t6; m2 = t23 & t8; m3 = t14 ^ m1; m4 = t19 & u7; m5 = m4 ^ m1;
+    m6 = t3 & t16; m7 = t22 & t9; m8 = t26 ^ m6; m9 = t20 & t17; m10 = m9 ^ m6;
+    m11 = t1 & t15; m12 = t4 & t27; m13 = m12 ^ m11; m14 = t2 & t10; m15 = m14 ^ m11;
+    m16 = m3 ^ m2; m17 = m5 ^ t24; m18 = m8 ^ m7; m19 = m10 ^ m15; m20 = m16 ^ m13;
+    m21 = m17 ^ m15; m22 = m18 ^ m13; m23 = m19 ^ t25; m24 = m22 ^ m23; m25 = m22 & m20;
+    m26 = m21 ^ m25; m27 = m20 ^ m21; m28 = m23 ^ m25; m29 = m28 & m27; m30 = m26 & m24;
+    m31 = m20 & m23; m32 = m27 & m31; m33 = m27 ^ m25; m34 = m21 & m22; m35 = m24 & m34;
+    m36 = m24 ^ m25; m37 = m21 ^ m29; m38 = m32 ^ m33; m39 = m23 ^ m30; m40 = m35 ^ m36;
+    m41 = m38 ^ m40; m42 = m37 ^ m39; m43 = m37 ^ m38; m44 = m39 ^ m40; m45 = m42 ^ m41;
+    m46 = m44 & t6; m47 = m40 & t8; m48 = m39 & u7; m49 = m43 & t16; m50 = m38 & t9;
+    m51 = m37 & t17; m52 = m42 & t15; m53 = m45 & t27; m54 = m41 & t10; m55 = m44 & t13;
+    m56 = m40 & t23; m57 = m39 & t19; m58 = m43 & t3; m59 = m38 & t22; m60 = m37 & t20;
+    m61 = m42 & t1; m62 = m45 & t4; m63 = m41 & t2;
+
+    /* bottom linear layer, with the affine map */
+    l0 = m61 ^ m62; l1 = m50 ^ m56; l2 = m46 ^ m48; l3 = m47 ^ m55; l4 = m54 ^ m58;
+    l5 = m49 ^ m61; l6 = m62 ^ l5; l7 = m46 ^ l3; l8 = m51 ^ m59; l9 = m52 ^ m53;
+    l10 = m53 ^ l4; l11 = m60 ^ l2; l12 = m48 ^ m51; l13 = m50 ^ l0; l14 = m52 ^ m61;
+    l15 = m55 ^ l1; l16 = m56 ^ l0; l17 = m57 ^ l1; l18 = m58 ^ l8; l19 = m63 ^ l4;
+    l20 = l0 ^ l1; l21 = l1 ^ l7; l22 = l3 ^ l12; l23 = l18 ^ l2; l24 = l15 ^ l9;
+    l25 = l6 ^ l10; l26 = l7 ^ l9; l27 = l8 ^ l10; l28 = l11 ^ l14; l29 = l11 ^ l17;
+
+    q[7] = l6 ^ l24;
+    q[6] = ~(l16 ^ l26);
+    q[5] = ~(l19 ^ l28);
+    q[4] = l6 ^ l21;
+    q[3] = l20 ^ l22;
+    q[2] = l25 ^ l29;
+    q[1] = ~(l13 ^ l27);
+    q[0] = ~(l6 ^ l23);
+}
+
+/* the inverse of the affine map (FIPS 197 5.3.2): bit i of the result is
+ * bits i+2, i+5 and i+7 of the input (mod 8), and 0x05 */
+static void inv_affine(W q[8])
+{
+    W q0 = q[0], q1 = q[1], q2 = q[2], q3 = q[3], q4 = q[4], q5 = q[5], q6 = q[6], q7 = q[7];
+    q[0] = ~(q2 ^ q5 ^ q7);
+    q[1] = q3 ^ q6 ^ q0;
+    q[2] = ~(q4 ^ q7 ^ q1);
+    q[3] = q5 ^ q0 ^ q2;
+    q[4] = q6 ^ q1 ^ q3;
+    q[5] = q7 ^ q2 ^ q4;
+    q[6] = q0 ^ q3 ^ q5;
+    q[7] = q1 ^ q4 ^ q6;
+}
+
+/* InvSubBytes: S^-1 = A^-1 . S . A^-1, as S = A . inv */
+static void inv_sub_bytes(W q[8])
+{
+    inv_affine(q);
+    sub_bytes(q);
+    inv_affine(q);
+}
+
+#if defined(__GNUC__) && (defined(__mc68020__) || defined(__mc68030__) || defined(__mc68040__) || defined(__mc68060__))
+/* on the 68020 and up the rows turn in registers: the low byte with ror.b,
+ * the next with it brought down by ror.w #8, the third by swap */
+#define SR1(x) __asm__("ror.b #6,%0\n\tror.w #8,%0\n\tror.b #4,%0\n\tror.w #8,%0\n\t" \
+                       "swap %0\n\tror.b #2,%0\n\tswap %0" : "+d"(x))
+#define ISR1(x) __asm__("rol.b #6,%0\n\tror.w #8,%0\n\trol.b #4,%0\n\tror.w #8,%0\n\t" \
+                        "swap %0\n\trol.b #2,%0\n\tswap %0" : "+d"(x))
+#else
+/* ShiftRows: row r's eight bits (two per column, in byte 3 - r) turn right
+ * by 2 r */
+static W shift_rows1(W x)
+{
+    return (x & 0xff000000u)
+         | ((x >> 2) & 0x003f0000u) | ((x << 6) & 0x00c00000u)
+         | ((x >> 4) & 0x00000f00u) | ((x << 4) & 0x0000f000u)
+         | ((x >> 6) & 0x00000003u) | ((x << 2) & 0x000000fcu);
+}
+
+static W inv_shift_rows1(W x)
+{
+    return (x & 0xff000000u)
+         | ((x << 2) & 0x00fc0000u) | ((x >> 6) & 0x00030000u)
+         | ((x << 4) & 0x0000f000u) | ((x >> 4) & 0x00000f00u)
+         | ((x << 6) & 0x000000c0u) | ((x >> 2) & 0x0000003fu);
+}
+
+#define SR1(x) ((x) = shift_rows1(x))
+#define ISR1(x) ((x) = inv_shift_rows1(x))
+#endif
+
+static void shift_rows(W q[8])
+{
+    W a = q[0], b = q[1], c = q[2], d = q[3];
+    SR1(a); SR1(b); SR1(c); SR1(d);
+    q[0] = a; q[1] = b; q[2] = c; q[3] = d;
+    a = q[4]; b = q[5]; c = q[6]; d = q[7];
+    SR1(a); SR1(b); SR1(c); SR1(d);
+    q[4] = a; q[5] = b; q[6] = c; q[7] = d;
+}
+
+static void inv_shift_rows(W q[8])
+{
+    W a = q[0], b = q[1], c = q[2], d = q[3];
+    ISR1(a); ISR1(b); ISR1(c); ISR1(d);
+    q[0] = a; q[1] = b; q[2] = c; q[3] = d;
+    a = q[4]; b = q[5]; c = q[6]; d = q[7];
+    ISR1(a); ISR1(b); ISR1(c); ISR1(d);
+    q[4] = a; q[5] = b; q[6] = c; q[7] = d;
+}
+
+static W rol8(W x)  { return (x << 8) | (x >> 24); }   /* row r + 1 into row r */
+static W ror16(W x) { return (x >> 16) | (x << 16); }
+
+/* q = 2 q in GF(2^8), bit plane by bit plane */
+static void xtime_q(W q[8])
+{
+    W hi = q[7];
+    q[7] = q[6]; q[6] = q[5]; q[5] = q[4]; q[4] = q[3] ^ hi;
+    q[3] = q[2] ^ hi; q[2] = q[1]; q[1] = q[0] ^ hi; q[0] = hi;
+}
+
+/* MixColumns: a_r' = 2 (a_r + a_r+1) + a_r+1 + a_r+2 + a_r+3, one plane at a
+ * time: with t = q + rol8(q), plane i of 2 t is t_i-1, plus t_7 in planes 0,
+ * 1, 3 and 4 */
+#define MIXP(i, xt) do { W r_ = rol8(q[i]); W ti_ = q[i] ^ r_; \
+    q[i] = r_ ^ ror16(ti_) ^ (xt); tp = ti_; } while (0)
+static void mix_columns(W q[8])
+{
+    W t7 = q[7] ^ rol8(q[7]), tp;
+    MIXP(0, t7);
+    MIXP(1, tp ^ t7);
+    MIXP(2, tp);
+    MIXP(3, tp ^ t7);
+    MIXP(4, tp ^ t7);
+    MIXP(5, tp);
+    MIXP(6, tp);
+    MIXP(7, tp);
+}
+
+/* InvMixColumns = MixColumns after a_r += 4 (a_r + a_r+2) */
+static void inv_mix_columns(W q[8])
+{
+    W t[8];
+    int i;
+    for (i = 0; i < 8; ++i) t[i] = q[i] ^ ror16(q[i]);
+    xtime_q(t);
+    xtime_q(t);
+    for (i = 0; i < 8; ++i) q[i] ^= t[i];
+    mix_columns(q);
+}
+
+/* the round keys, sliced for two blocks: 8 (Nr + 1) words; Nr returned
+ * (0: bad length) */
+static int expand_key(W sk[120], const uint8_t *key, size_t keylen)
+{
+    W w[60], q[8], tmp;
     int nk = (int)(keylen / 4), nr, i, words;
-    uint8_t t[4], rcon = 1;
+    W rcon = 1;
     if (keylen != 16 && keylen != 24 && keylen != 32) return 0;
     nr = nk + 6;
     words = 4 * (nr + 1);
-    memcpy(rk, key, keylen);
+    for (i = 0; i < nk; ++i) w[i] = be32(key + 4 * i);
     for (i = nk; i < words; ++i) {
-        memcpy(t, rk + 4 * (i - 1), 4);
-        if (i % nk == 0) {
-            uint8_t r[4] = { t[1], t[2], t[3], t[0] };
-            ct_lookup(t, r, 4, sbox);
-            t[0] ^= rcon;
-            rcon = xtime(rcon);
-        } else if (nk > 6 && i % nk == 4) {
-            ct_lookup(t, t, 4, sbox);
+        tmp = w[i - 1];
+        if (i % nk == 0 || (nk > 6 && i % nk == 4)) {
+            if (i % nk == 0) tmp = (tmp << 8) | (tmp >> 24);    /* RotWord */
+            /* SubWord: the word as block 0's column 0 */
+            memset(q, 0, sizeof q);
+            q[0] = tmp;
+            transpose(q);
+            sub_bytes(q);
+            transpose(q);
+            tmp = q[0];
+            if (i % nk == 0) {
+                tmp ^= rcon << 24;
+                rcon = ((rcon << 1) ^ (0x1b & -(rcon >> 7))) & 0xff;
+            }
         }
-        rk[4 * i] = rk[4 * (i - nk)] ^ t[0];
-        rk[4 * i + 1] = rk[4 * (i - nk) + 1] ^ t[1];
-        rk[4 * i + 2] = rk[4 * (i - nk) + 2] ^ t[2];
-        rk[4 * i + 3] = rk[4 * (i - nk) + 3] ^ t[3];
+        w[i] = w[i - nk] ^ tmp;
     }
+    for (i = 0; i <= nr; ++i) {
+        int c;
+        W *k = sk + 8 * i;
+        for (c = 0; c < 4; ++c) k[2 * c] = k[2 * c + 1] = w[4 * i + c];
+        transpose(k);
+    }
+    oc_cleanse(w, sizeof w);
+    oc_cleanse(q, sizeof q);
     return nr;
 }
 
-static void encrypt_block(uint8_t s[16], const uint8_t *rk, int nr)
+static void add_round_key(W q[8], const W *k)
 {
-    uint8_t t[16];
-    int r, c, i;
-    for (i = 0; i < 16; ++i) s[i] ^= rk[i];
-    for (r = 1; r <= nr; ++r) {
-        ct_lookup(t, s, 16, sbox);
-        /* ShiftRows: byte (row, col) at 4 col + row */
-        for (c = 0; c < 4; ++c)
-            for (i = 0; i < 4; ++i)
-                s[4 * c + i] = t[4 * ((c + i) & 3) + i];
-        if (r != nr)
-            for (c = 0; c < 4; ++c) {
-                uint8_t *a = s + 4 * c, a0 = a[0], a1 = a[1], a2 = a[2], a3 = a[3];
-                uint8_t all = a0 ^ a1 ^ a2 ^ a3;
-                a[0] = a0 ^ all ^ xtime(a0 ^ a1);
-                a[1] = a1 ^ all ^ xtime(a1 ^ a2);
-                a[2] = a2 ^ all ^ xtime(a2 ^ a3);
-                a[3] = a3 ^ all ^ xtime(a3 ^ a0);
-            }
-        for (i = 0; i < 16; ++i) s[i] ^= rk[16 * r + i];
-    }
-    memset(t, 0, sizeof t);
+    q[0] ^= k[0]; q[1] ^= k[1]; q[2] ^= k[2]; q[3] ^= k[3];
+    q[4] ^= k[4]; q[5] ^= k[5]; q[6] ^= k[6]; q[7] ^= k[7];
 }
 
-static uint8_t gmul(uint8_t a, uint8_t b)
+static void encrypt2(W q[8], const W *sk, int nr)
 {
-    uint8_t r = 0;
-    int i;
-    for (i = 0; i < 8; ++i) {
-        r ^= a & (uint8_t)-(b & 1);
-        a = xtime(a);
-        b >>= 1;
+    int r;
+    add_round_key(q, sk);
+    for (r = 1; r < nr; ++r) {
+        sub_bytes(q);
+        shift_rows(q);
+        mix_columns(q);
+        add_round_key(q, sk + 8 * r);
     }
-    return r;
+    sub_bytes(q);
+    shift_rows(q);
+    add_round_key(q, sk + 8 * nr);
 }
 
-static void decrypt_block(uint8_t s[16], const uint8_t *rk, int nr)
+static void decrypt2(W q[8], const W *sk, int nr)
 {
-    uint8_t t[16];
-    int r, c, i;
-    for (i = 0; i < 16; ++i) s[i] ^= rk[16 * nr + i];
-    for (r = nr - 1; r >= 0; --r) {
-        /* InvShiftRows */
-        for (c = 0; c < 4; ++c)
-            for (i = 0; i < 4; ++i)
-                t[4 * ((c + i) & 3) + i] = s[4 * c + i];
-        ct_lookup(s, t, 16, inv_sbox);
-        for (i = 0; i < 16; ++i) s[i] ^= rk[16 * r + i];
-        if (r != 0)
-            for (c = 0; c < 4; ++c) {
-                uint8_t *a = s + 4 * c, a0 = a[0], a1 = a[1], a2 = a[2], a3 = a[3];
-                a[0] = gmul(a0, 14) ^ gmul(a1, 11) ^ gmul(a2, 13) ^ gmul(a3, 9);
-                a[1] = gmul(a0, 9) ^ gmul(a1, 14) ^ gmul(a2, 11) ^ gmul(a3, 13);
-                a[2] = gmul(a0, 13) ^ gmul(a1, 9) ^ gmul(a2, 14) ^ gmul(a3, 11);
-                a[3] = gmul(a0, 11) ^ gmul(a1, 13) ^ gmul(a2, 9) ^ gmul(a3, 14);
-            }
+    int r;
+    add_round_key(q, sk + 8 * nr);
+    for (r = nr - 1; r > 0; --r) {
+        inv_shift_rows(q);
+        inv_sub_bytes(q);
+        add_round_key(q, sk + 8 * r);
+        inv_mix_columns(q);
     }
-    memset(t, 0, sizeof t);
+    inv_shift_rows(q);
+    inv_sub_bytes(q);
+    add_round_key(q, sk);
+}
+
+/* the 128-bit big-endian counter as four words, moved on by one */
+static void ctr_next(W v[4])
+{
+    if (++v[3]) return;
+    if (++v[2]) return;
+    if (++v[1]) return;
+    ++v[0];
 }
 
 int oc_aes(uint8_t *buf, size_t length, const uint8_t *key, size_t keylen,
            const uint8_t iv[16], int mode)
 {
-    uint8_t rk[240], b[16], v[16], k[16];
+    W sk[120], q[8];
+    uint8_t v[16], c0[16], c1[16], k0[16], k1[16];
     size_t i, n;
-    int nr = expand_key(rk, key, keylen), j;
+    int nr = expand_key(sk, key, keylen);
     if (!nr) return -1;
     if (mode != OC_AES_CTR && (length & 15)) return -1;
     memcpy(v, iv, 16);
     switch (mode) {
-    case OC_AES_CTR:
+    case OC_AES_CTR: {
+        W ctr[4], *k;
+        int c;
+        for (c = 0; c < 4; ++c) ctr[c] = be32(iv + 4 * c);
         while (length) {
-            memcpy(k, v, 16);
-            encrypt_block(k, rk, nr);
-            n = length < 16 ? length : 16;
-            for (i = 0; i < n; ++i) buf[i] ^= k[i];
-            for (j = 15; j >= 0; --j)               /* the 128-bit big-endian counter */
-                if (++v[j]) break;
+            for (c = 0; c < 4; ++c) q[2 * c] = ctr[c];
+            ctr_next(ctr);
+            for (c = 0; c < 4; ++c) q[2 * c + 1] = ctr[c];
+            ctr_next(ctr);
+            transpose(q);
+            encrypt2(q, sk, nr);
+            transpose(q);
+            n = length < 32 ? length : 32;
+            if (n == 32 && WORD_OK(buf)) {
+                k = (W *)(void *)buf;
+                k[0] ^= q[0]; k[1] ^= q[2]; k[2] ^= q[4]; k[3] ^= q[6];
+                k[4] ^= q[1]; k[5] ^= q[3]; k[6] ^= q[5]; k[7] ^= q[7];
+            } else {
+                for (c = 0; c < 4; ++c) { put_be32(k0 + 4 * c, q[2 * c]); put_be32(k1 + 4 * c, q[2 * c + 1]); }
+                for (i = 0; i < n && i < 16; ++i) buf[i] ^= k0[i];
+                for (; i < n; ++i) buf[i] ^= k1[i - 16];
+            }
             buf += n;
             length -= n;
         }
+        oc_cleanse(ctr, sizeof ctr);
         break;
+    }
     case OC_AES_CBC_ENCRYPT:
         for (; length; length -= 16, buf += 16) {
             for (i = 0; i < 16; ++i) buf[i] ^= v[i];
-            encrypt_block(buf, rk, nr);
+            load2(q, buf, buf);
+            encrypt2(q, sk, nr);
+            store2(buf, NULL, q);
             memcpy(v, buf, 16);
         }
         break;
     case OC_AES_CBC_DECRYPT:
-        for (; length; length -= 16, buf += 16) {
-            memcpy(b, buf, 16);
-            decrypt_block(buf, rk, nr);
+        while (length) {
+            size_t two = length >= 32;
+            memcpy(c0, buf, 16);
+            if (two) memcpy(c1, buf + 16, 16);
+            load2(q, buf, two ? buf + 16 : buf);
+            decrypt2(q, sk, nr);
+            store2(buf, two ? buf + 16 : NULL, q);
             for (i = 0; i < 16; ++i) buf[i] ^= v[i];
-            memcpy(v, b, 16);
+            if (two) {
+                for (i = 0; i < 16; ++i) buf[16 + i] ^= c0[i];
+                memcpy(v, c1, 16);
+            } else {
+                memcpy(v, c0, 16);
+            }
+            n = two ? 32 : 16;
+            buf += n;
+            length -= n;
         }
         break;
     case OC_AES_ECB_ENCRYPT:
-        for (; length; length -= 16, buf += 16) encrypt_block(buf, rk, nr);
+        while (length) {
+            size_t two = length >= 32;
+            load2(q, buf, two ? buf + 16 : buf);
+            encrypt2(q, sk, nr);
+            store2(buf, two ? buf + 16 : NULL, q);
+            n = two ? 32 : 16;
+            buf += n;
+            length -= n;
+        }
         break;
     default:
+        oc_cleanse(sk, sizeof sk);
         return -1;
     }
-    oc_cleanse(rk, sizeof rk);
-    oc_cleanse(k, sizeof k);
+    oc_cleanse(sk, sizeof sk);
+    oc_cleanse(q, sizeof q);
+    oc_cleanse(k0, sizeof k0);
+    oc_cleanse(k1, sizeof k1);
     return 0;
 }

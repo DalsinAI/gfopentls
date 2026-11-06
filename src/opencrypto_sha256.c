@@ -9,6 +9,9 @@ static uint32_t rotr(uint32_t x, unsigned n)
 
 static uint32_t load_be32(const uint8_t *p)
 {
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    if (!((uintptr_t)p & 1)) return *(const uint32_t *)(const void *)p;   /* the 68k: one move */
+#endif
     return ((uint32_t)p[0] << 24) |
            ((uint32_t)p[1] << 16) |
            ((uint32_t)p[2] << 8) |
@@ -58,15 +61,24 @@ static void transform(OCSHA256 *ctx, const uint8_t block[64])
     a=ctx->h[0]; b=ctx->h[1]; c=ctx->h[2]; d=ctx->h[3];
     e=ctx->h[4]; f=ctx->h[5]; g=ctx->h[6]; h=ctx->h[7];
 
-    for (i = 0; i < 64; ++i) {
-        uint32_t S1 = rotr(e,6) ^ rotr(e,11) ^ rotr(e,25);
-        uint32_t ch = (e & f) ^ ((~e) & g);
-        uint32_t t1 = h + S1 + ch + k[i] + w[i];
-        uint32_t S0 = rotr(a,2) ^ rotr(a,13) ^ rotr(a,22);
-        uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
-        uint32_t t2 = S0 + maj;
-        h=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2;
+    /* eight rounds a pass, the working words renamed rather than moved */
+#define RND(a, b, c, d, e, f, g, h, j) do { \
+        uint32_t t1_ = (h) + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) \
+                     + ((((f) ^ (g)) & (e)) ^ (g)) + k[i + (j)] + w[i + (j)]; \
+        (d) += t1_; \
+        (h) = t1_ + (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) \
+            + (((a) & (b)) | (((a) | (b)) & (c))); } while (0)
+    for (i = 0; i < 64; i += 8) {
+        RND(a, b, c, d, e, f, g, h, 0);
+        RND(h, a, b, c, d, e, f, g, 1);
+        RND(g, h, a, b, c, d, e, f, 2);
+        RND(f, g, h, a, b, c, d, e, 3);
+        RND(e, f, g, h, a, b, c, d, 4);
+        RND(d, e, f, g, h, a, b, c, 5);
+        RND(c, d, e, f, g, h, a, b, 6);
+        RND(b, c, d, e, f, g, h, a, 7);
     }
+#undef RND
 
     ctx->h[0]+=a; ctx->h[1]+=b; ctx->h[2]+=c; ctx->h[3]+=d;
     ctx->h[4]+=e; ctx->h[5]+=f; ctx->h[6]+=g; ctx->h[7]+=h;
@@ -88,7 +100,14 @@ void oc_sha256_update(OCSHA256 *ctx, const void *data, size_t length)
     const uint8_t *p = (const uint8_t *)data;
     ctx->total_bytes += length;
     while (length) {
-        size_t n = 64 - ctx->block_used;
+        size_t n;
+        if (!ctx->block_used && length >= 64) {     /* whole blocks: no copy */
+            transform(ctx, p);
+            p += 64;
+            length -= 64;
+            continue;
+        }
+        n = 64 - ctx->block_used;
         if (n > length) n = length;
         memcpy(ctx->block + ctx->block_used, p, n);
         ctx->block_used += n;

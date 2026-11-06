@@ -113,6 +113,7 @@ LONG ot_random(void *buf, size_t len)
     unsigned char seed[32];
     if (!buf && len) return OTERR_ARGS;
     if (!ot_rng_lock && !ot_random_init()) return OTERR_NOMEM;
+    if (!ot_glue_ready()) return OTERR_RANDOM;     /* its SHA-256 is gfopencrypto.library's */
     ot_lock(ot_rng_lock);
     if (!ot_seeded) {
         if (!gather(seed, 512)) {

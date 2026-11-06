@@ -38,5 +38,9 @@
 /* version 2, revision 2 */
 #define OC_SHA1(req) LP1NR(0xae, OC_SHA1, struct OCBufferHash *, req, a0, , OPENCRYPTO_BASE_NAME)
 #define OC_SHA1Blocks(req) LP1(0xb4, LONG, OC_SHA1Blocks, struct OCBlocksRequest *, req, a0, , OPENCRYPTO_BASE_NAME)
+#define OC_MD5Blocks(req) LP1(0xba, LONG, OC_MD5Blocks, struct OCBlocksRequest *, req, a0, , OPENCRYPTO_BASE_NAME)
+#define OC_GHASH(req) LP1(0xc0, LONG, OC_GHASH, struct OCGHASHRequest *, req, a0, , OPENCRYPTO_BASE_NAME)
+#define OC_ECMul(req) LP1(0xc6, LONG, OC_ECMul, struct OCECMulRequest *, req, a0, , OPENCRYPTO_BASE_NAME)
+#define OC_ECMulGen(req) LP1(0xcc, LONG, OC_ECMulGen, struct OCECMulRequest *, req, a0, , OPENCRYPTO_BASE_NAME)
 
 #endif

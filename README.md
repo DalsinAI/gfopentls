@@ -24,7 +24,10 @@ needs, for GFOpenPuTTY first:
 | RSA public operation | up to 8192 bits, for PKCS #1 signatures |
 | RSASSA-PSS verification | version 2.1 (`OC_RSAPSSVerify`), for TLS 1.3 certificates |
 | SHA-1 | version 2.2 (`OC_SHA1`, `OC_SHA1Blocks`), FIPS 180-4, for formats that name it (file identity checks); not collision resistant |
-| AES-128/192/256 | CTR (SSH's SDCTR), CBC, ECB; constant time |
+| MD5 | version 2.3 (`OC_MD5Blocks`), RFC 1321, only for TLS 1.0 and 1.1 |
+| GHASH | version 2.3 (`OC_GHASH`), for AES-GCM; constant time |
+| ECDH point multiplication | version 2.3 (`OC_ECMul`, `OC_ECMulGen`), P-256, P-384, P-521; constant time |
+| AES-128/192/256 | CTR (SSH's SDCTR), CBC, ECB; constant time (bitsliced) |
 | ChaCha20, Poly1305 | the 64-bit nonce form SSH's `chacha20-poly1305@openssh.com` uses |
 
 On AmiCradle the x86 or ARM64 cores do the heavy work: each operation is an AC090
@@ -52,6 +55,13 @@ ECDSA, RSA-PSS and Ed25519 certificates, resumption with tickets through
 the same `OT_GetSession()`/`OT_SetSession()`, KeyUpdate. No 0-RTT, no
 client certificates. `OT_SetVersion()` sets one connection's range.
 DESIGN.md section 10 has the design.
+
+`gfopentls.library` 1.4 (6 November 2026): every hash, cipher and
+public-key operation is gfopencrypto.library's (2.3 or newer), our own
+constant-time 68k code on a real Amiga, none of BearSSL's; BearSSL keeps
+the protocol (TLS 1.0 to 1.2, X.509 parsing). The library is 69 KB
+smaller, and each operation at least as fast as BearSSL's on a 68040.
+DESIGN.md section 12 has the figures.
 
 ## Building and testing
 
