@@ -20,6 +20,9 @@ static uint32_t rotl(uint32_t x, unsigned n)
 
 static uint32_t load_be32(const uint8_t *p)
 {
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    if (!((uintptr_t)p & 1)) return *(const uint32_t *)(const void *)p;   /* the 68k: one move */
+#endif
     return ((uint32_t)p[0] << 24) |
            ((uint32_t)p[1] << 16) |
            ((uint32_t)p[2] << 8) |
@@ -34,38 +37,47 @@ static void store_be32(uint8_t *p, uint32_t v)
     p[3] = (uint8_t)v;
 }
 
+/* word i of the schedule, made in place from the 16 before it (i >= 16) */
+#define SCHED(i) (w[(i) & 15] = rotl(w[((i) + 13) & 15] ^ w[((i) + 8) & 15] ^ \
+                                    w[((i) + 2) & 15] ^ w[(i) & 15], 1))
+#define CH(b, c, d)  ((((c) ^ (d)) & (b)) ^ (d))
+#define PAR(b, c, d) ((b) ^ (c) ^ (d))
+#define MAJ(b, c, d) (((b) & (c)) | (((b) | (c)) & (d)))
+/* one step, the five working words renamed rather than moved */
+#define STEP(a, b, c, d, e, F, k, wi) do { \
+    (e) += rotl(a, 5) + F(b, c, d) + (k) + (wi); (b) = rotl(b, 30); } while (0)
+#define FIVE(F, k, i, W) do { \
+    STEP(a, b, c, d, e, F, k, W(i));     STEP(e, a, b, c, d, F, k, W((i) + 1)); \
+    STEP(d, e, a, b, c, F, k, W((i) + 2)); STEP(c, d, e, a, b, F, k, W((i) + 3)); \
+    STEP(b, c, d, e, a, F, k, W((i) + 4)); } while (0)
+#define WIN(i) w[i]
+
 static void transform(uint32_t h[5], const uint8_t block[64])
 {
     uint32_t w[16];
-    uint32_t a, b, c, d, e, f, k, t;
-    unsigned i, s;
+    uint32_t a, b, c, d, e;
+    unsigned i;
 
     for (i = 0; i < 16; ++i)
         w[i] = load_be32(block + i * 4);
 
     a = h[0]; b = h[1]; c = h[2]; d = h[3]; e = h[4];
 
-    for (i = 0; i < 80; ++i) {
-        s = i & 15;
-        if (i >= 16)
-            w[s] = rotl(w[(s + 13) & 15] ^ w[(s + 8) & 15] ^
-                        w[(s + 2) & 15] ^ w[s], 1);
-        if (i < 20) {
-            f = (b & c) ^ (~b & d);              /* Ch */
-            k = 0x5a827999u;
-        } else if (i < 40) {
-            f = b ^ c ^ d;                       /* Parity */
-            k = 0x6ed9eba1u;
-        } else if (i < 60) {
-            f = (b & c) ^ (b & d) ^ (c & d);     /* Maj */
-            k = 0x8f1bbcdcu;
-        } else {
-            f = b ^ c ^ d;                       /* Parity */
-            k = 0xca62c1d6u;
-        }
-        t = rotl(a, 5) + f + e + k + w[s];
-        e = d; d = c; c = rotl(b, 30); b = a; a = t;
-    }
+    FIVE(CH, 0x5a827999u, 0, WIN);
+    FIVE(CH, 0x5a827999u, 5, WIN);
+    FIVE(CH, 0x5a827999u, 10, WIN);
+    STEP(a, b, c, d, e, CH, 0x5a827999u, w[15]);
+    STEP(e, a, b, c, d, CH, 0x5a827999u, SCHED(16));
+    STEP(d, e, a, b, c, CH, 0x5a827999u, SCHED(17));
+    STEP(c, d, e, a, b, CH, 0x5a827999u, SCHED(18));
+    STEP(b, c, d, e, a, CH, 0x5a827999u, SCHED(19));
+    /* written out: the schedule's indexes are then constants */
+    FIVE(PAR, 0x6ed9eba1u, 20, SCHED); FIVE(PAR, 0x6ed9eba1u, 25, SCHED);
+    FIVE(PAR, 0x6ed9eba1u, 30, SCHED); FIVE(PAR, 0x6ed9eba1u, 35, SCHED);
+    FIVE(MAJ, 0x8f1bbcdcu, 40, SCHED); FIVE(MAJ, 0x8f1bbcdcu, 45, SCHED);
+    FIVE(MAJ, 0x8f1bbcdcu, 50, SCHED); FIVE(MAJ, 0x8f1bbcdcu, 55, SCHED);
+    FIVE(PAR, 0xca62c1d6u, 60, SCHED); FIVE(PAR, 0xca62c1d6u, 65, SCHED);
+    FIVE(PAR, 0xca62c1d6u, 70, SCHED); FIVE(PAR, 0xca62c1d6u, 75, SCHED);
 
     h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e;
 }
@@ -86,7 +98,14 @@ void oc_sha1_update(OCSHA1 *ctx, const void *data, size_t length)
     const uint8_t *p = (const uint8_t *)data;
     ctx->total_bytes += length;
     while (length) {
-        size_t n = OC_SHA1_BLOCK_BYTES - ctx->block_used;
+        size_t n;
+        if (!ctx->block_used && length >= OC_SHA1_BLOCK_BYTES) {   /* whole blocks: no copy */
+            transform(ctx->h, p);
+            p += OC_SHA1_BLOCK_BYTES;
+            length -= OC_SHA1_BLOCK_BYTES;
+            continue;
+        }
+        n = OC_SHA1_BLOCK_BYTES - ctx->block_used;
         if (n > length) n = length;
         memcpy(ctx->block + ctx->block_used, p, n);
         ctx->block_used += n;
