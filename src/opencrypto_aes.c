@@ -155,6 +155,14 @@ static void inv_sub_bytes(W q[8])
     inv_affine(q);
 }
 
+#if defined(__GNUC__) && (defined(__mc68020__) || defined(__mc68030__) || defined(__mc68040__) || defined(__mc68060__))
+/* on the 68020 and up the rows turn in registers: the low byte with ror.b,
+ * the next with it brought down by ror.w #8, the third by swap */
+#define SR1(x) __asm__("ror.b #6,%0\n\tror.w #8,%0\n\tror.b #4,%0\n\tror.w #8,%0\n\t" \
+                       "swap %0\n\tror.b #2,%0\n\tswap %0" : "+d"(x))
+#define ISR1(x) __asm__("rol.b #6,%0\n\tror.w #8,%0\n\trol.b #4,%0\n\tror.w #8,%0\n\t" \
+                        "swap %0\n\trol.b #2,%0\n\tswap %0" : "+d"(x))
+#else
 /* ShiftRows: row r's eight bits (two per column, in byte 3 - r) turn right
  * by 2 r */
 static W shift_rows1(W x)
@@ -173,14 +181,6 @@ static W inv_shift_rows1(W x)
          | ((x << 6) & 0x000000c0u) | ((x >> 2) & 0x0000003fu);
 }
 
-#if defined(__GNUC__) && (defined(__mc68020__) || defined(__mc68030__) || defined(__mc68040__) || defined(__mc68060__))
-/* on the 68020 and up the rows turn in registers: the low byte with ror.b,
- * the next with it brought down by ror.w #8, the third by swap */
-#define SR1(x) __asm__("ror.b #6,%0\n\tror.w #8,%0\n\tror.b #4,%0\n\tror.w #8,%0\n\t" \
-                       "swap %0\n\tror.b #2,%0\n\tswap %0" : "+d"(x))
-#define ISR1(x) __asm__("rol.b #6,%0\n\tror.w #8,%0\n\trol.b #4,%0\n\tror.w #8,%0\n\t" \
-                        "swap %0\n\trol.b #2,%0\n\tswap %0" : "+d"(x))
-#else
 #define SR1(x) ((x) = shift_rows1(x))
 #define ISR1(x) ((x) = inv_shift_rows1(x))
 #endif

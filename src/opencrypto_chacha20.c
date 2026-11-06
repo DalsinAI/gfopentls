@@ -23,9 +23,10 @@ static void put_le32(uint8_t *p, uint32_t v)
     a += b; d ^= a; d = ROTL(d, 8);                    \
     c += d; b ^= c; b = ROTL(b, 7)
 
-static void chacha20_block(uint8_t out[64], const uint32_t in[16])
+/* the 20 rounds; out = the key stream block as 16 words (little-endian
+ * values) */
+static void chacha20_words(uint32_t x[16], const uint32_t in[16])
 {
-    uint32_t x[16];
     int i;
     for (i = 0; i < 16; ++i) x[i] = in[i];
     for (i = 0; i < 10; ++i) {
@@ -38,13 +39,29 @@ static void chacha20_block(uint8_t out[64], const uint32_t in[16])
         QR(x[2], x[7], x[8], x[13]);
         QR(x[3], x[4], x[9], x[14]);
     }
-    for (i = 0; i < 16; ++i) put_le32(out + 4 * i, x[i] + in[i]);
+    for (i = 0; i < 16; ++i) x[i] += in[i];
 }
+
+/* a little-endian value as it lies in memory, for a word move */
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define WORD_XOR 1
+static uint32_t bswap32(uint32_t v)
+{
+#if defined(__GNUC__) && defined(__mc68000__)
+    __asm__("ror.w #8,%0\n\tswap %0\n\tror.w #8,%0" : "+d"(v));
+    return v;
+#else
+    return (v >> 24) | ((v >> 8) & 0xff00u) | ((v << 8) & 0xff0000u) | (v << 24);
+#endif
+}
+#else
+#define WORD_XOR 0
+#endif
 
 void oc_chacha20_xor(uint8_t *out, const uint8_t *in, size_t length,
                      const uint8_t key[32], const uint8_t nonce[8], uint64_t counter)
 {
-    uint32_t s[16];
+    uint32_t s[16], x[16];
     uint8_t ks[64];
     size_t i, n;
     s[0] = 0x61707865u; s[1] = 0x3320646eu; s[2] = 0x79622d32u; s[3] = 0x6b206574u;
@@ -54,15 +71,27 @@ void oc_chacha20_xor(uint8_t *out, const uint8_t *in, size_t length,
     while (length) {
         s[12] = (uint32_t)counter;
         s[13] = (uint32_t)(counter >> 32);
-        chacha20_block(ks, s);
+        chacha20_words(x, s);
         n = length < 64 ? length : 64;
-        for (i = 0; i < n; ++i) out[i] = (uint8_t)(in ? in[i] ^ ks[i] : ks[i]);
+#if WORD_XOR
+        if (n == 64 && !(((uintptr_t)out | (uintptr_t)in) & 1)) {   /* even: word moves */
+            uint32_t *o = (uint32_t *)(void *)out;
+            const uint32_t *p = (const uint32_t *)(const void *)in;
+            if (in) for (i = 0; i < 16; ++i) o[i] = p[i] ^ bswap32(x[i]);
+            else for (i = 0; i < 16; ++i) o[i] = bswap32(x[i]);
+        } else
+#endif
+        {
+            for (i = 0; i < 16; ++i) put_le32(ks + 4 * i, x[i]);
+            for (i = 0; i < n; ++i) out[i] = (uint8_t)(in ? in[i] ^ ks[i] : ks[i]);
+        }
         out += n;
         if (in) in += n;
         length -= n;
         ++counter;
     }
     oc_cleanse(s, sizeof s);
+    oc_cleanse(x, sizeof x);
     oc_cleanse(ks, sizeof ks);
 }
 
