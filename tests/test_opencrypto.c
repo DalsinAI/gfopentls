@@ -61,6 +61,13 @@ static int check_sha1_routes(const char *msg)
     return !memcmp(one, inc, 20) && !memcmp(one, blk, 20);
 }
 
+static int check_md5(const char *msg, const char *want_hex)
+{
+    uint8_t got[16], want[16];
+    oc_md5(msg, strlen(msg), got);
+    return hex(want, sizeof want, want_hex) && oc_ct_equal(got, want, sizeof got);
+}
+
 static int check_sha384(const char *msg, const char *want_hex)
 {
     uint8_t got[48], want[48];
@@ -137,6 +144,15 @@ int main(void)
                 return 16;
     }
 
+    /* MD5: RFC 1321's test suite (A.5) */
+    if (!check_md5("", "d41d8cd98f00b204e9800998ecf8427e")
+        || !check_md5("abc", "900150983cd24fb0d6963f7d28e17f72")
+        || !check_md5("message digest", "f96b697d7cb7938d525a2f31aaf161d0")
+        || !check_md5("abcdefghijklmnopqrstuvwxyz", "c3fcd3d76192e4007dfb496cca67e13b")
+        || !check_md5("12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+                      "57edf4a22be3c955ac49da2e2107b67a"))
+        return 17;
+
     oc_hmac_sha256("key", 3, fox, strlen(fox), got);
     if (!hex(want, 32, "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8")
         || !oc_ct_equal(got, want, 32))
@@ -194,6 +210,6 @@ int main(void)
     for (size_t i = 0; i < sizeof got; ++i)
         if (got[i]) return 11;
 
-    puts("OPENCRYPTO PASS sha1 sha256 sha384 sha512 hmac hkdf aes-gcm ct-cleanse");
+    puts("OPENCRYPTO PASS md5 sha1 sha256 sha384 sha512 hmac hkdf aes-gcm ct-cleanse");
     return 0;
 }

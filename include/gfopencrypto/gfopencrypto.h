@@ -82,6 +82,12 @@ void oc_sha1_final(OCSHA1 *ctx, uint8_t out[OC_SHA1_BYTES]);
 void oc_sha1(const void *data, size_t length, uint8_t out[OC_SHA1_BYTES]);
 void oc_sha1_blocks(uint8_t state[OC_SHA1_BYTES], const void *data, size_t nblocks);
 
+/* MD5 (RFC 1321), only for what still names it (TLS 1.0 and 1.1); the
+ * block function keeps the 16-byte chaining value little-endian */
+#define OC_MD5_BYTES 16
+void oc_md5(const void *data, size_t length, uint8_t out[OC_MD5_BYTES]);
+void oc_md5_blocks(uint8_t state[OC_MD5_BYTES], const void *data, size_t nblocks);
+
 /* ---- for SSH's key exchanges, host keys and default cipher (8 Oct 2026) ---- */
 
 #define OC_SEED_BYTES 32

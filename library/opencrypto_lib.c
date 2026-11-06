@@ -8,7 +8,12 @@
  * RSASSA-PSS verification for TLS 1.3: RSA's magic function, then the
  * encoding check as 68k code (opencrypto_pss.c, a few hashes).
  * Revision 2 (6 Nov 2026) adds SHA-1 (OC_SHA1, OC_SHA1Blocks), our own
- * code from FIPS 180-4 (opencrypto_sha1.c), as 68k code everywhere. */
+ * code from FIPS 180-4 (opencrypto_sha1.c), as 68k code everywhere.
+ * Revision 3 (6 Nov 2026) adds what GFOpenTLS took from BearSSL: MD5
+ * blocks (TLS 1.0 and 1.1), GHASH (AES-GCM) and point multiplication on
+ * P-256, P-384 and P-521 (ECDHE), our own 68k code; and the public-key
+ * calls no longer refuse a caller short of stack, they run on one of
+ * their own. */
 #include <exec/types.h>
 #include <exec/resident.h>
 #include <exec/libraries.h>
@@ -35,11 +40,11 @@ int start(void) { return -1; }
 
 static const char lib_name[] = OPENCRYPTOLIB_NAME;
 static const char lib_id[] =
-    "gfopencrypto.library 2.2 (6.11.2026) GFOpenCrypto, AmiCradle Team\r\n";
+    "gfopencrypto.library 2.3 (6.11.2026) GFOpenCrypto, AmiCradle Team\r\n";
 /* For Version FILE and the Installer: without it, Version only finds the
  * library's version once it is in memory. */
 static const char lib_ver[] __attribute__((used)) =
-    "$VER: gfopencrypto.library 2.2 (6.11.2026) GFOpenCrypto, AmiCradle Team";
+    "$VER: gfopencrypto.library 2.3 (6.11.2026) GFOpenCrypto, AmiCradle Team";
 
 static struct Library *lib_init(REG(d0, struct OpenCryptoLibBase *base),
                                 REG(a0, BPTR seglist),
@@ -76,6 +81,10 @@ DECL(OC_ECDSAVerify, struct OCECDSARequest);
 DECL(OC_RSAPSSVerify, struct OCRSAPSSRequest);
 static void OC_SHA1(REG(a0, struct OCBufferHash *r), REG(a6, struct OpenCryptoLibBase *base));
 DECL(OC_SHA1Blocks, struct OCBlocksRequest);
+DECL(OC_MD5Blocks, struct OCBlocksRequest);
+DECL(OC_GHASH, struct OCGHASHRequest);
+DECL(OC_ECMul, struct OCECMulRequest);
+DECL(OC_ECMulGen, struct OCECMulRequest);
 
 static const APTR lib_vectors[] = {
     (APTR)lib_open, (APTR)lib_close, (APTR)lib_expunge, (APTR)lib_null,
@@ -90,6 +99,7 @@ static const APTR lib_vectors[] = {
     (APTR)OC_AES, (APTR)OC_RSAPublic, (APTR)OC_ECDSAVerify,
     (APTR)OC_RSAPSSVerify,
     (APTR)OC_SHA1, (APTR)OC_SHA1Blocks,
+    (APTR)OC_MD5Blocks, (APTR)OC_GHASH, (APTR)OC_ECMul, (APTR)OC_ECMulGen,
     (APTR)-1
 };
 
@@ -235,6 +245,42 @@ static int stack_ok(ULONG need)
     return (ULONG)&here - lower >= need;
 }
 
+/* fn(arg) on a stack of its own, for a caller with less free than the
+ * operation needs: fn runs with SP at top, and SP comes back after */
+#define OC_SYM_(x) #x
+#define OC_SYM(x) OC_SYM_(x)
+#ifdef __USER_LABEL_PREFIX__
+#define OC_ASM_NAME(n) OC_SYM(__USER_LABEL_PREFIX__) #n
+#else
+#define OC_ASM_NAME(n) #n
+#endif
+LONG oc_on_stack(void *top, LONG (*fn)(void *), void *arg);
+__asm__("\t.text\n\t.even\n\t.globl\t" OC_ASM_NAME(oc_on_stack) "\n"
+        OC_ASM_NAME(oc_on_stack) ":\n"
+        "\tmove.l\ta2,-(sp)\n"
+        "\tmove.l\t8(sp),a0\n"          /* top */
+        "\tmove.l\t12(sp),a1\n"         /* fn */
+        "\tmove.l\t16(sp),d0\n"         /* arg */
+        "\tmove.l\tsp,a2\n"
+        "\tmove.l\ta0,sp\n"
+        "\tmove.l\td0,-(sp)\n"
+        "\tjsr\t(a1)\n"
+        "\tmove.l\ta2,sp\n"
+        "\tmove.l\t(sp)+,a2\n"
+        "\trts\n");
+
+static LONG with_stack(ULONG need, LONG (*fn)(void *), void *arg)
+{
+    UBYTE *mem;
+    LONG rc;
+    if (stack_ok(need)) return fn(arg);
+    mem = AllocMem(need + 256, MEMF_ANY);
+    if (!mem) return OCERR_STACK;
+    rc = oc_on_stack(mem + ((need + 256) & ~(ULONG)3), fn, arg);
+    FreeMem(mem, need + 256);
+    return rc;
+}
+
 static ULONG OC_Accelerated(REG(a6, struct OpenCryptoLibBase *base))
 {
     (void)base;
@@ -337,20 +383,30 @@ DECL(OC_AES, struct OCAESRequest)
     return ocm_aes(r->buf, r->length, r->key, r->key_length, r->iv, r->mode) ? OCERR_ARGS : 0;
 }
 
+static LONG rsa_public(void *a)
+{
+    struct OCRSARequest *r = a;
+    return ocm_rsa_public(r->out, r->sig, r->n, r->n_length, r->e, r->e_length) ? OCERR_ARGS : 0;
+}
+
 DECL(OC_RSAPublic, struct OCRSARequest)
 {
     (void)base;
     if (!r || !r->out || !r->sig || !r->n || !r->e) return OCERR_ARGS;
-    if (!stack_ok(16384)) return OCERR_STACK;
-    return ocm_rsa_public(r->out, r->sig, r->n, r->n_length, r->e, r->e_length) ? OCERR_ARGS : 0;
+    return with_stack(16384, rsa_public, r);
+}
+
+static LONG ecdsa_verify(void *a)
+{
+    struct OCECDSARequest *r = a;
+    return ocm_ecdsa_verify(r->curve, r->qx, r->qy, r->r, r->s, r->hash, r->hash_length);
 }
 
 DECL(OC_ECDSAVerify, struct OCECDSARequest)
 {
     (void)base;
     if (!r || !r->qx || !r->qy || !r->r || !r->s || !r->hash) return 0;
-    if (!stack_ok(8192)) return OCERR_STACK;
-    return ocm_ecdsa_verify(r->curve, r->qx, r->qy, r->r, r->s, r->hash, r->hash_length);
+    return with_stack(8192, ecdsa_verify, r);
 }
 
 static void pss_sha256(const void *d, size_t l, uint8_t *o) { oc_sha256(d, l, o); }
@@ -393,4 +449,50 @@ DECL(OC_SHA1Blocks, struct OCBlocksRequest)
     if (r->blocks)
         oc_sha1_blocks(r->state, r->data, r->blocks);
     return 0;
+}
+
+/* ---- version 2, revision 3 ---- */
+
+DECL(OC_MD5Blocks, struct OCBlocksRequest)
+{
+    (void)base;
+    if (!r || !r->state || (!r->data && r->blocks)) return OCERR_ARGS;
+    if (r->blocks)
+        oc_md5_blocks(r->state, r->data, r->blocks);
+    return 0;
+}
+
+DECL(OC_GHASH, struct OCGHASHRequest)
+{
+    (void)base;
+    if (!r || !r->y || !r->h || (!r->data && r->length)) return OCERR_ARGS;
+    if (r->length)
+        oc_ghash(r->y, r->h, r->data, r->length);
+    return 0;
+}
+
+static LONG ec_mul(void *a)
+{
+    struct OCECMulRequest *r = a;
+    return oc_ec_mul(r->curve, r->point, r->point_length, r->scalar, r->scalar_length);
+}
+
+static LONG ec_mulgen(void *a)
+{
+    struct OCECMulRequest *r = a;
+    return oc_ec_mulgen(r->curve, r->point, r->scalar, r->scalar_length);
+}
+
+DECL(OC_ECMul, struct OCECMulRequest)
+{
+    (void)base;
+    if (!r || !r->point || !r->scalar) return 0;
+    return with_stack(8192, ec_mul, r);
+}
+
+DECL(OC_ECMulGen, struct OCECMulRequest)
+{
+    (void)base;
+    if (!r || !r->point || !r->scalar) return 0;
+    return with_stack(8192, ec_mulgen, r);
 }

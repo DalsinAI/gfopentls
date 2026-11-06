@@ -6,7 +6,7 @@
 
 #define OPENCRYPTOLIB_NAME "gfopencrypto.library"
 #define OPENCRYPTOLIB_VERSION 2
-#define OPENCRYPTOLIB_REVISION 2
+#define OPENCRYPTOLIB_REVISION 3
 
 struct OCBufferHash {
     const void *data;
@@ -148,5 +148,40 @@ struct OCRSAPSSRequest {          /* RSASSA-PSS, MGF1 with the same hash */
 #define OC_SHA1_IV { 0x67,0x45,0x23,0x01, 0xef,0xcd,0xab,0x89, \
                      0x98,0xba,0xdc,0xfe, 0x10,0x32,0x54,0x76, \
                      0xc3,0xd2,0xe1,0xf0 }
+
+/* ---- version 2, revision 3 (6 November 2026): for GFOpenTLS ----
+ * OC_MD5Blocks(struct OCBlocksRequest *): whole 64-byte blocks, the
+ * chaining value as 16 little-endian bytes (MD5's own order, RFC 1321);
+ * start it from OC_MD5_IV and pad the last block yourself. MD5 is only for
+ * what still names it (TLS 1.0 and 1.1).
+ * OC_GHASH(struct OCGHASHRequest *): y = GHASH_h(y, data), NIST SP 800-38D;
+ * a partial last block counts as if padded with zeros. 0 done.
+ * OC_ECMul(struct OCECMulRequest *): point (uncompressed, 1 + 2 * field
+ * bytes) = scalar * point on P-256, P-384 or P-521; 1 done, 0 refused (not
+ * on the curve, a zero scalar, the point at infinity).
+ * OC_ECMulGen(struct OCECMulRequest *): point = scalar * G (point_length
+ * ignored); the point's length, or 0 refused.
+ * All four run as 68k code on every machine, in constant time. Since this
+ * revision OC_RSAPublic, OC_ECDSAVerify, OC_ECMul and OC_ECMulGen run on a
+ * stack of their own when the caller has too little free, rather than
+ * answering OCERR_STACK (which they still answer if that memory is not
+ * there). */
+#define OC_MD5_IV { 0x01,0x23,0x45,0x67, 0x89,0xab,0xcd,0xef, \
+                    0xfe,0xdc,0xba,0x98, 0x76,0x54,0x32,0x10 }
+
+struct OCGHASHRequest {
+    UBYTE *y;                     /* 16 bytes, in and out */
+    const UBYTE *h;               /* 16 bytes: the hash key */
+    const void *data;
+    ULONG length;
+};
+
+struct OCECMulRequest {
+    LONG curve;                   /* 256, 384 or 521 */
+    UBYTE *point;                 /* 0x04 || x || y */
+    ULONG point_length;
+    const UBYTE *scalar;          /* big-endian */
+    ULONG scalar_length;
+};
 
 #endif

@@ -7,7 +7,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 add_library(opencrypto STATIC
     src/opencrypto_sha256.c src/opencrypto_sha512.c src/opencrypto_sha1.c
     src/opencrypto_x25519.c src/opencrypto_ed25519.c
-    src/opencrypto_sntrup761.c src/opencrypto_chacha20.c src/opencrypto_ghash.c src/opencrypto_ecdh.c
+    src/opencrypto_sntrup761.c src/opencrypto_chacha20.c src/opencrypto_ghash.c src/opencrypto_ecdh.c src/opencrypto_md5.c
     src/opencrypto_aes.c src/opencrypto_pubkey.c src/opencrypto_pss.c)
 target_include_directories(opencrypto PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 

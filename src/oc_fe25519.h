@@ -16,19 +16,19 @@
 
 typedef int32_t oc_gf[16];
 
-static void gf_set(oc_gf r, const oc_gf a)
+static __attribute__((unused)) void gf_set(oc_gf r, const oc_gf a)
 {
     int i;
     for (i = 0; i < 16; ++i) r[i] = a[i];
 }
 
-static void gf_zero(oc_gf r)
+static __attribute__((unused)) void gf_zero(oc_gf r)
 {
     int i;
     for (i = 0; i < 16; ++i) r[i] = 0;
 }
 
-static void gf_one(oc_gf r)
+static __attribute__((unused)) void gf_one(oc_gf r)
 {
     gf_zero(r);
     r[0] = 1;
@@ -36,7 +36,7 @@ static void gf_one(oc_gf r)
 
 /* limbs to [0, 2^16), the carry out of the top one folded back as 38
  * times itself (2^256 = 38 mod p); the arithmetic shifts floor */
-static void gf_carry64(int64_t t[16])
+static __attribute__((unused)) void gf_carry64(int64_t t[16])
 {
     int i;
     int64_t c;
@@ -48,19 +48,19 @@ static void gf_carry64(int64_t t[16])
     }
 }
 
-static void gf_add(oc_gf o, const oc_gf a, const oc_gf b)
+static __attribute__((unused)) void gf_add(oc_gf o, const oc_gf a, const oc_gf b)
 {
     int i;
     for (i = 0; i < 16; ++i) o[i] = a[i] + b[i];
 }
 
-static void gf_sub(oc_gf o, const oc_gf a, const oc_gf b)
+static __attribute__((unused)) void gf_sub(oc_gf o, const oc_gf a, const oc_gf b)
 {
     int i;
     for (i = 0; i < 16; ++i) o[i] = a[i] - b[i];
 }
 
-static void gf_mul(oc_gf o, const oc_gf a, const oc_gf b)
+static __attribute__((unused)) void gf_mul(oc_gf o, const oc_gf a, const oc_gf b)
 {
     int64_t t[31];
     int i, j;
@@ -74,13 +74,13 @@ static void gf_mul(oc_gf o, const oc_gf a, const oc_gf b)
     for (i = 0; i < 16; ++i) o[i] = (int32_t)t[i];
 }
 
-static void gf_sqr(oc_gf o, const oc_gf a)
+static __attribute__((unused)) void gf_sqr(oc_gf o, const oc_gf a)
 {
     gf_mul(o, a, a);
 }
 
 /* r = a, b = b when bit is 0; swapped when it is 1 (bit is 0 or 1) */
-static void gf_cswap(oc_gf a, oc_gf b, int bit)
+static __attribute__((unused)) void gf_cswap(oc_gf a, oc_gf b, int bit)
 {
     int32_t mask = -(int32_t)bit, t;
     int i;
@@ -92,7 +92,7 @@ static void gf_cswap(oc_gf a, oc_gf b, int bit)
 }
 
 /* the canonical 32 bytes (little-endian, below p) */
-static void gf_pack(uint8_t o[32], const oc_gf n)
+static __attribute__((unused)) void gf_pack(uint8_t o[32], const oc_gf n)
 {
     int64_t t[16], m[16], c, mask;
     int i, k;
@@ -137,7 +137,7 @@ static void gf_pack(uint8_t o[32], const oc_gf n)
 }
 
 /* 32 bytes, the top bit ignored */
-static void gf_unpack(oc_gf o, const uint8_t n[32])
+static __attribute__((unused)) void gf_unpack(oc_gf o, const uint8_t n[32])
 {
     int i;
     for (i = 0; i < 16; ++i) o[i] = n[2 * i] | ((int32_t)n[2 * i + 1] << 8);
@@ -145,7 +145,7 @@ static void gf_unpack(oc_gf o, const uint8_t n[32])
 }
 
 /* a^(p-2) = 1/a (0 for 0) */
-static void gf_inv(oc_gf o, const oc_gf a)
+static __attribute__((unused)) void gf_inv(oc_gf o, const oc_gf a)
 {
     oc_gf c;
     int i;
