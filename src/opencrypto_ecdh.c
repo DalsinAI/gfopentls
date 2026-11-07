@@ -14,7 +14,13 @@
  * P-256 skips Montgomery's reduction: a product is reduced with the
  * curve's special form (FIPS 186-4 appendix D.2.3), word sums only, so
  * its field elements are kept plain (its "R" is 1). */
+#if !defined(ECDH_NO_HEADER)
 #include "gfopencrypto/gfopencrypto.h"
+#else
+#include <stddef.h>
+#include <stdint.h>
+void oc_cleanse(void *p, size_t length);
+#endif
 
 #include <string.h>
 
