@@ -27,10 +27,30 @@ target_link_libraries(test_keys_kdf PRIVATE opencrypto)
 add_executable(oc_cli tests/oc_cli.c)
 target_link_libraries(oc_cli PRIVATE opencrypto)
 
+# libgfopencrypto.a's own code (stub/) on the host: the real oc_* code
+# renamed real_oc_* behind mock library calls (tests/stub_host)
+set(OPENCRYPTO_SRC
+    src/opencrypto_sha256.c src/opencrypto_sha512.c src/opencrypto_sha1.c
+    src/opencrypto_x25519.c src/opencrypto_ed25519.c
+    src/opencrypto_sntrup761.c src/opencrypto_chacha20.c src/opencrypto_ghash.c src/opencrypto_ecdh.c src/opencrypto_md5.c
+    src/opencrypto_aes.c src/opencrypto_pubkey.c src/opencrypto_pss.c
+    src/opencrypto_hmac.c src/opencrypto_sha3.c src/opencrypto_argon2.c
+    src/opencrypto_bignum.c src/opencrypto_ecdsa_sign.c)
+add_library(opencrypto_renamed STATIC ${OPENCRYPTO_SRC} tests/stub_host/mock.c)
+target_include_directories(opencrypto_renamed PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/stub_host
+    ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/host/include)
+target_compile_options(opencrypto_renamed PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/tests/stub_host/rename.h)
+add_executable(test_stub_host tests/stub_host/test_stub.c stub/gfopencrypto_stub.c
+    stub/stub_pss.c stub/stub_keccak.c stub/stub_blake2b.c)
+target_include_directories(test_stub_host PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/stub_host
+    ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/host/include ${CMAKE_CURRENT_SOURCE_DIR}/stub)
+target_link_libraries(test_stub_host PRIVATE opencrypto_renamed)
+
 enable_testing()
 add_test(NAME opencrypto_vectors COMMAND test_opencrypto)
 add_test(NAME opencrypto_ssh_vectors COMMAND test_ssh_primitives)
 add_test(NAME opencrypto_keys_kdf_vectors COMMAND test_keys_kdf)
+add_test(NAME opencrypto_link_stub_host COMMAND test_stub_host)
 # against Python's cryptography package (OpenSSL), when it is installed
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_FOUND)
