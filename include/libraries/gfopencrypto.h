@@ -161,8 +161,10 @@ struct OCRSAPSSRequest {          /* RSASSA-PSS, MGF1 with the same hash */
  * on the curve, a zero scalar, the point at infinity).
  * OC_ECMulGen(struct OCECMulRequest *): point = scalar * G (point_length
  * ignored); the point's length, or 0 refused.
- * All four run as 68k code on every machine, in constant time. Since this
- * revision OC_RSAPublic, OC_ECDSAVerify, OC_ECMul and OC_ECMulGen run on a
+ * OC_MD5Blocks and OC_GHASH run as 68k code on every machine. OC_ECMul and
+ * OC_ECMulGen are magic functions, in constant time: host code on AC090,
+ * this same C as 68k code when the tag is declined. Since this revision
+ * OC_RSAPublic, OC_ECDSAVerify, OC_ECMul and OC_ECMulGen run on a
  * stack of their own when the caller has too little free, rather than
  * answering OCERR_STACK (which they still answer if that memory is not
  * there). */

@@ -35,6 +35,8 @@
 #define AC_MAGIC_OC_AES             0x0001020a
 #define AC_MAGIC_OC_RSA_PUBLIC      0x0001020b
 #define AC_MAGIC_OC_ECDSA_VERIFY    0x0001020c
+#define AC_MAGIC_OC_EC_MUL          0x0001020d
+#define AC_MAGIC_OC_EC_MULGEN       0x0001020e
 
 #define AC_MAGIC_STR_(x) #x
 #define AC_MAGIC_STR(x) AC_MAGIC_STR_(x)
@@ -71,7 +73,14 @@
  *   ocm_poly1305(tag[16], data, len, key[32])
  *   ocm_aes(buf[len], len, key, keylen, iv[16], mode) -> oc_aes's answer
  *   ocm_rsa_public(out[nlen], sig[nlen], n, nlen, e, elen) -> oc_rsa_public's answer
- *   ocm_ecdsa_verify(curve, qx, qy, r, s, hash, hlen) -> 1 valid, 0 not (writes nothing) */
+ *   ocm_ecdsa_verify(curve, qx, qy, r, s, hash, hlen) -> 1 valid, 0 not (writes nothing)
+ *   ocm_ec_mul(point, curve, point_length, scalar, scalar_length)
+ *       point (X9.62 uncompressed, 1 + 2 field bytes) = scalar . point, in place.
+ *       1, or 0 (a bad curve, length or point writes nothing; a result at
+ *       infinity writes the point and returns 0). oc_ec_mul's answer.
+ *   ocm_ec_mulgen(point, curve, scalar, scalar_length)
+ *       point = scalar . G, the same encoding. The point's length, or 0
+ *       (a bad curve writes nothing). oc_ec_mulgen's answer. */
 uint32_t ocm_probe(void);
 int32_t ocm_x25519(uint8_t *out, const uint8_t *scalar, const uint8_t *point);
 int32_t ocm_ed25519_verify(const uint8_t *sig, const uint8_t *pk, const uint8_t *msg, uint32_t len);
@@ -86,5 +95,8 @@ int32_t ocm_aes(uint8_t *buf, uint32_t len, const uint8_t *key, uint32_t keylen,
 int32_t ocm_rsa_public(uint8_t *out, const uint8_t *sig, const uint8_t *n, uint32_t nlen, const uint8_t *e, uint32_t elen);
 int32_t ocm_ecdsa_verify(int32_t curve, const uint8_t *qx, const uint8_t *qy, const uint8_t *r,
                          const uint8_t *s, const uint8_t *hash, uint32_t hlen);
+int32_t ocm_ec_mul(uint8_t *point, int32_t curve, uint32_t point_length,
+                   const uint8_t *scalar, uint32_t scalar_length);
+int32_t ocm_ec_mulgen(uint8_t *point, int32_t curve, const uint8_t *scalar, uint32_t scalar_length);
 
 #endif

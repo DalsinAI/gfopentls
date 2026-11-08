@@ -98,3 +98,17 @@ AC_MAGIC_KEEP int32_t AC_MAGIC_BODY(ocm_ecdsa_verify)(int32_t curve, const uint8
 {
     return oc_ecdsa_verify(curve, qx, qy, r, s, hash, hlen);
 }
+
+AC_MAGIC(ocm_ec_mul, AC_MAGIC_OC_EC_MUL)
+AC_MAGIC_KEEP int32_t AC_MAGIC_BODY(ocm_ec_mul)(uint8_t *point, int32_t curve, uint32_t point_length,
+                                               const uint8_t *scalar, uint32_t scalar_length)
+{
+    return oc_ec_mul(curve, point, point_length, scalar, scalar_length);
+}
+
+AC_MAGIC(ocm_ec_mulgen, AC_MAGIC_OC_EC_MULGEN)
+AC_MAGIC_KEEP int32_t AC_MAGIC_BODY(ocm_ec_mulgen)(uint8_t *point, int32_t curve, const uint8_t *scalar,
+                                                  uint32_t scalar_length)
+{
+    return oc_ec_mulgen(curve, point, scalar, scalar_length);
+}

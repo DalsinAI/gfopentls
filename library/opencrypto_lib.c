@@ -499,13 +499,13 @@ DECL(OC_GHASH, struct OCGHASHRequest)
 static LONG ec_mul(void *a)
 {
     struct OCECMulRequest *r = a;
-    return oc_ec_mul(r->curve, r->point, r->point_length, r->scalar, r->scalar_length);
+    return ocm_ec_mul(r->point, r->curve, r->point_length, r->scalar, r->scalar_length);
 }
 
 static LONG ec_mulgen(void *a)
 {
     struct OCECMulRequest *r = a;
-    return oc_ec_mulgen(r->curve, r->point, r->scalar, r->scalar_length);
+    return ocm_ec_mulgen(r->point, r->curve, r->scalar, r->scalar_length);
 }
 
 DECL(OC_ECMul, struct OCECMulRequest)

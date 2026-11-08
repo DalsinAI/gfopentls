@@ -14,7 +14,13 @@
  * P-256 skips Montgomery's reduction: a product is reduced with the
  * curve's special form (FIPS 186-4 appendix D.2.3), word sums only, so
  * its field elements are kept plain (its "R" is 1). */
+#if !defined(ECDH_NO_HEADER)
 #include "gfopencrypto/gfopencrypto.h"
+#else
+#include <stddef.h>
+#include <stdint.h>
+void oc_cleanse(void *p, size_t length);
+#endif
 
 #include <string.h>
 
@@ -1112,6 +1118,9 @@ static int mul_point(uint8_t *pt, const uint8_t *scalar, size_t slen, const curv
     f_mul(y, y, zi, C);
     to_bytes(pt + 1, (size_t)bytes, x, k);
     to_bytes(pt + 1 + bytes, (size_t)bytes, y, k);
+    oc_cleanse(x, sizeof x);
+    oc_cleanse(y, sizeof y);
+    oc_cleanse(zi, sizeof zi);
     oc_cleanse(table, sizeof table);
     oc_cleanse(&R, sizeof R);
     oc_cleanse(&S, sizeof S);

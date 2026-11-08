@@ -75,7 +75,7 @@ in A0, as version 1's calls).
 
 - **Who does the work.** Each heavy operation is a magic function
   (`library/oc_magic.h`): a 12-byte tag in front of a stack-convention
-  function, with the ids `$00010200` to `$0001020c` in amicradle-guest's
+  function, with the ids `$00010200` to `$0001020e` in amicradle-guest's
   `ac_magic.h`. On AmiCradle AC090 runs it as host code
   (amicradle's `jit_crypto.c`), compiled from this repository's
   `src/` (copied there by its `opencrypto/sync.sh`); everywhere else the
@@ -332,7 +332,9 @@ at least as fast as BearSSL's on a 68040 first.
   assembly); MD5 is new (RFC 1321, only for TLS 1.0 and 1.1). Everything
   that touches a secret runs in constant time.
 - **The library** (2.3, revision 3): `OC_MD5Blocks`, `OC_GHASH`,
-  `OC_ECMul`, `OC_ECMulGen` at the end of the table. RSA, ECDSA and the EC
+  `OC_ECMul`, `OC_ECMulGen` at the end of the table. Those two are magic
+  functions (`$0001020d`, `$0001020e`): AC090 runs this same C as host code,
+  and a machine that declines the tag runs it as 68k code. RSA, ECDSA and the EC
   calls run on a stack of their own (AllocMem) when the caller's is short,
   instead of refusing.
 - **GFOpenTLS** (1.4): `ot_glue.c` fills every BearSSL table from

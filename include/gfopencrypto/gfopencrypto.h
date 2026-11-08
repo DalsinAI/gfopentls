@@ -198,6 +198,7 @@ int oc_emsa_pss_verify(const uint8_t *em, size_t em_length, size_t mod_bits,
 #define OCF_AES       (1u << 7)
 #define OCF_RSA       (1u << 8)
 #define OCF_ECDSA     (1u << 9)
+#define OCF_EC        (1u << 10)   /* OC_ECMul and OC_ECMulGen */
 
 /* ---- for FileZilla's SFTP and FTPS, and its key files (6 November 2026) ---- */
 

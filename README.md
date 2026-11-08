@@ -26,7 +26,7 @@ needs, for GFOpenPuTTY first:
 | SHA-1 | version 2.2 (`OC_SHA1`, `OC_SHA1Blocks`), FIPS 180-4, for formats that name it (file identity checks); not collision resistant |
 | MD5 | version 2.3 (`OC_MD5Blocks`), RFC 1321, only for TLS 1.0 and 1.1 |
 | GHASH | version 2.3 (`OC_GHASH`), for AES-GCM; constant time |
-| ECDH point multiplication | version 2.3 (`OC_ECMul`, `OC_ECMulGen`), P-256, P-384, P-521; constant time |
+| ECDH point multiplication | version 2.3 (`OC_ECMul`, `OC_ECMulGen`), P-256, P-384, P-521; constant time; magic functions on AC090 |
 | HMAC-SHA1, HMAC-SHA512, PBKDF2 | version 2.4 (`OC_HMAC_SHA1`, `OC_HMAC_SHA512`, `OC_PBKDF2` over SHA-1/256/384/512), for FileZilla |
 | SHA-3, SHAKE256 | version 2.4 (`OC_SHA3`, `OC_SHA3Init/Update/Final`), FIPS 202: SHA3-256/384/512 |
 | Argon2 | version 2.4 (`OC_Argon2`), RFC 9106, types id, i and d (PuTTY's version 3 key files) |
