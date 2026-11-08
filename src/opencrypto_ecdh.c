@@ -1118,6 +1118,9 @@ static int mul_point(uint8_t *pt, const uint8_t *scalar, size_t slen, const curv
     f_mul(y, y, zi, C);
     to_bytes(pt + 1, (size_t)bytes, x, k);
     to_bytes(pt + 1 + bytes, (size_t)bytes, y, k);
+    oc_cleanse(x, sizeof x);
+    oc_cleanse(y, sizeof y);
+    oc_cleanse(zi, sizeof zi);
     oc_cleanse(table, sizeof table);
     oc_cleanse(&R, sizeof R);
     oc_cleanse(&S, sizeof S);
