@@ -81,6 +81,23 @@ size_t ot13_seal(struct ot13_keys *k, unsigned char *rec, int type, size_t len);
  * does not decrypt, BR_ERR_BAD_PARAM when it is malformed. */
 int ot13_open(struct ot13_keys *k, unsigned char *rec, size_t reclen, int *type, size_t *len);
 
+/* ---- TLS 1.2 (RFC 5246, 5288, 7905) ---- */
+
+/* the PRF: P_hash(secret, label + seed), out_len bytes */
+void ot12_prf(const br_hash_class *h, const unsigned char *secret, size_t slen, const char *label,
+              const unsigned char *seed, size_t seed_len, unsigned char *out, size_t out_len);
+/* a direction's keys from the key block: the AEAD key and its IV (4 bytes
+ * of salt for AES-GCM, 12 for ChaCha20-Poly1305); 0, or -1 when the AES
+ * table cannot fit */
+int ot12_keys_set(struct ot13_keys *k, const struct ot13_suite *s, const struct ot_impls *impls,
+                  const unsigned char *key, const unsigned char *iv);
+/* Seals a record in place: rec + 5 holds len bytes of type's content; the
+ * record's length is answered. rec needs len + 5 + 8 + 16 bytes. */
+size_t ot12_seal(struct ot13_keys *k, unsigned char *rec, int type, size_t len);
+/* Opens a record in place (header included, reclen bytes): the content is
+ * then at rec + 5, *len bytes. 0, BR_ERR_BAD_MAC or BR_ERR_BAD_PARAM. */
+int ot12_open(struct ot13_keys *k, unsigned char *rec, size_t reclen, size_t *len);
+
 /* ---- tickets and sessions ---- */
 
 struct ot13_ticket {
@@ -103,7 +120,13 @@ enum {
     T13_WAIT_CV,
     T13_WAIT_FIN,
     T13_OPEN,                        /* our Finished queued: the handshake is done */
-    T13_BRIDGE                       /* the server chose TLS 1.2: BearSSL goes on */
+    T13_BRIDGE,                      /* the server chose TLS 1.2 with a suite of BearSSL's */
+    /* TLS 1.2, ours (ot_tls13.c's t12_ functions; DESIGN.md section 15) */
+    T12_WAIT_CERT,
+    T12_WAIT_SKE,
+    T12_WAIT_SHD,                    /* CertificateRequest or ServerHelloDone */
+    T12_WAIT_CCS,                    /* the server's ChangeCipherSpec */
+    T12_WAIT_FIN
 };
 
 struct ot13_bridge;                  /* ot_tls13_bridge.c */
@@ -165,6 +188,14 @@ struct ot13 {
     int close_sent;
     /* TLS 1.2 */
     struct ot13_bridge *bridge;
+    int v12;                         /* the server chose TLS 1.2 and a suite of ours */
+    int resumed12;                   /* an abbreviated handshake (session ID) */
+    unsigned char srandom[32];
+    unsigned char master12[48];
+    unsigned char ecpriv[66];        /* the key share for P-384 or P-521 */
+    size_t ecpriv_len;
+    unsigned char kx_pub[133];       /* our ECDHE share, for the ClientKeyExchange */
+    size_t kx_len;
 };
 
 /* ---- ot_tls13.c: what ot_core.c calls ---- */

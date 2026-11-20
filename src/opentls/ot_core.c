@@ -927,7 +927,7 @@ struct OTSession *OT_GetSession(struct OTConnection *c)
     if (!c || (c->state != OTS_OPEN && c->state != OTS_CLOSED)) return NULL;
     s = ot_alloc(sizeof *s);
     if (!s) return NULL;
-    if (ot13_active(c)) {
+    if (ot13_active(c) && !c->t13->v12) {
         /* TLS 1.3: the newest ticket; until the first comes (OT_Read reads
          * it, after the handshake), a session that waits for it */
         ot_strlcpy(s->host, c->host, sizeof s->host);
@@ -1018,7 +1018,7 @@ CONST_STRPTR OT_ErrorString(LONG error)
 LONG OT_GetProtocol(struct OTConnection *c)
 {
     if (!c || (c->state != OTS_OPEN && c->state != OTS_CLOSED)) return 0;
-    if (ot13_active(c)) return OT_TLS13;
+    if (ot13_active(c)) return c->t13->v12 ? OT_TLS12 : OT_TLS13;
     return (LONG)br_ssl_engine_get_version(&c->cc.eng);
 }
 
@@ -1127,7 +1127,8 @@ CONST_STRPTR OT_GetKeyExchange(struct OTConnection *c)
     br_ssl_session_parameters p;
     if (!c || (c->state != OTS_OPEN && c->state != OTS_CLOSED)) return (CONST_STRPTR)"";
     if (ot13_active(c))
-        curve = c->t13->group == 29 ? BR_EC_curve25519 : c->t13->group == 23 ? BR_EC_secp256r1 : 0;
+        curve = c->t13->group == 29 ? BR_EC_curve25519 : c->t13->group == 23 ? BR_EC_secp256r1
+              : c->t13->group == 24 ? BR_EC_secp384r1 : c->t13->group == 25 ? BR_EC_secp521r1 : 0;
     else {
         br_ssl_engine_get_session_parameters(&c->cc.eng, &p);
         if (p.cipher_suite >> 8 == 0xC0 || p.cipher_suite >> 8 == 0xCC)   /* ECDHE suites */

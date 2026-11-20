@@ -55,6 +55,8 @@ void ot_local_to_utc(uint32_t days, uint32_t seconds, long west,
  * it small) */
 #define OT_KEY_UPDATE_AFTER (1UL << 23)
 uint32_t ot_key_update_after(void);
+/* TLS 1.2 by BearSSL instead of our own client (the host tests compare them) */
+int ot_tls12_bearssl(void);
 LONG ot_sock_read(LONG fd, struct Library *socketbase, void *buf, LONG len);
 LONG ot_sock_write(LONG fd, struct Library *socketbase, const void *buf, LONG len);
 LONG ot_hook_call(struct Hook *hook, void *object, struct OTIOMessage *msg);

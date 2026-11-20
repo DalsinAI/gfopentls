@@ -114,4 +114,10 @@ if(Python3_FOUND)
     add_test(NAME opentls_local_servers
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tls_local.py
                      $<TARGET_FILE:opentls_client> $<TARGET_FILE:opentls_ftps_get>)
+    # the same with TLS 1.2 by BearSSL, as before our own TLS 1.2 (DESIGN.md section 15)
+    add_test(NAME opentls_local_servers_bearssl12
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tls_local.py
+                     $<TARGET_FILE:opentls_client> $<TARGET_FILE:opentls_ftps_get>)
+    set_tests_properties(opentls_local_servers_bearssl12 PROPERTIES
+                         ENVIRONMENT "OPENTLS_TEST_TLS12_BEARSSL=1;OPENTLS_TEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/tls-local-bearssl12")
 endif()

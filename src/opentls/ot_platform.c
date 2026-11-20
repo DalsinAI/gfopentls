@@ -167,6 +167,11 @@ uint32_t ot_key_update_after(void)
     return OT_KEY_UPDATE_AFTER;
 }
 
+int ot_tls12_bearssl(void)
+{
+    return 0;
+}
+
 LONG ot_sock_read(LONG fd, struct Library *socketbase, void *buf, LONG len)
 {
     struct Library *SocketBase = socketbase;
@@ -305,6 +310,11 @@ uint32_t ot_key_update_after(void)
 {
     const char *n = getenv("OPENTLS_TEST_KEYUPDATE");   /* tests: records per key */
     return n ? (uint32_t)strtoul(n, NULL, 10) : OT_KEY_UPDATE_AFTER;
+}
+
+int ot_tls12_bearssl(void)
+{
+    return getenv("OPENTLS_TEST_TLS12_BEARSSL") != NULL;   /* tests: TLS 1.2 by BearSSL, as before 2.0 */
 }
 
 LONG ot_sock_read(LONG fd, struct Library *socketbase, void *buf, LONG len)
