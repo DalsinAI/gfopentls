@@ -16,10 +16,11 @@
 #include "bearssl.h"
 
 #define OT_LIB_VERSION   1
-#define OT_LIB_REVISION  5          /* 1.1: OT_GetPeerName; 1.2: S:GFOpenTLS/ca-bundle.pem, ENVARC:GFOpenTLS/certs/;
+#define OT_LIB_REVISION  6          /* 1.1: OT_GetPeerName; 1.2: S:GFOpenTLS/ca-bundle.pem, ENVARC:GFOpenTLS/certs/;
                                        1.3: TLS 1.3, OT_SetVersion, OT_SessionHasTicket;
                                        1.4: all maths in gfopencrypto.library 2.3, none of BearSSL's;
-                                       1.5: OTV_REPORT, the whole chain, certificate fields, group and MAC names */
+                                       1.5: OTV_REPORT, the whole chain, certificate fields, group and MAC names;
+                                       1.6: TLS 1.2 with ECDHE and AEAD suites by our own client */
 
 #define OT_HOST_MAX      255
 #define OT_ALPN_MAX      8          /* protocols offered at once */

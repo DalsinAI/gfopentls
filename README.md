@@ -78,6 +78,13 @@ algorithm, self-signed, fingerprints; `OT_CertAltName()`), and the key
 exchange and MAC names (`OT_GetKeyExchange()`, `OT_GetMAC()`). Client
 only, as before. DESIGN.md section 14.
 
+`gfopentls.library` 1.6 (20 November 2026): TLS 1.2 by our own client
+when the server picks ECDHE with AES-GCM or ChaCha20-Poly1305 (X25519,
+P-256, P-384 or P-521; RSA PKCS #1, RSA-PSS or ECDSA signatures;
+resumption by session ID), from the same ClientHello as TLS 1.3. The
+other TLS 1.2 suites still go to BearSSL. The first step of GFOpenTLS
+2.0 without BearSSL, DESIGN.md section 15.
+
 Link stubs (6 November 2026), for programs that want the C calls and
 not the library bases:
 
