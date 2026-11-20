@@ -86,6 +86,56 @@ def make_pki():
     sh("openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes",
        "-keyout", "self.key", "-out", "self.pem", "-days", "365", "-subj", "/CN=localhost",
        "-addext", "subjectAltName=DNS:localhost")
+    # the chain check's edge cases (DESIGN.md section 15, step 3): intermediates under the root
+    # that break a rule, and leaves under them
+    rsa = ["rsa:2048"]
+    ext("pathlen0.ext", "basicConstraints=critical,CA:TRUE,pathlen:0\nkeyUsage=critical,keyCertSign\n")
+    ext("notca.ext", "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,keyCertSign\n")
+    ext("nocertsign.ext", "basicConstraints=critical,CA:TRUE\nkeyUsage=critical,digitalSignature\n")
+    ext("critical.ext", "basicConstraints=CA:FALSE\nsubjectAltName=DNS:localhost\n1.2.3.4=critical,ASN1:NULL\n")
+    ext("clientauth.ext", "basicConstraints=CA:FALSE\nextendedKeyUsage=clientAuth\nsubjectAltName=DNS:localhost\n")
+    ext("cnonly.ext", "basicConstraints=CA:FALSE\n")
+    ext("cnwrongsan.ext", "basicConstraints=CA:FALSE\nsubjectAltName=DNS:other.example\n")
+    for name, extfile, issuer in (("pl0", "pathlen0.ext", "root"), ("pl0sub", "ca.ext", "pl0"),
+                                  ("notca", "notca.ext", "root"), ("nocertsign", "nocertsign.ext", "root"),
+                                  ("mid1", "ca.ext", "root"), ("mid2", "ca.ext", "mid1")):
+        sh("openssl", "req", "-newkey", *rsa, "-nodes", "-keyout", name + ".key", "-out", name + ".csr",
+           "-subj", "/CN=GFOpenTLS Test " + name)
+        sh("openssl", "x509", "-req", "-in", name + ".csr", "-CA", issuer + ".pem", "-CAkey", issuer + ".key",
+           "-CAcreateserial", "-out", name + ".pem", "-days", "3650", "-sha256", "-extfile", extfile)
+    days = ("-days", "365")
+    leaf("deep", ec256, "pl0sub", "localhost.ext", days)              # two CAs under pathlen 0
+    leaf("undernotca", ec256, "notca", "localhost.ext", days)
+    leaf("undernocertsign", ec256, "nocertsign", "localhost.ext", days)
+    leaf("critical", ec256, "inter", "critical.ext", days)
+    leaf("clientauth", ec256, "inter", "clientauth.ext", days)
+    leaf("unordered", ec256, "mid2", "localhost.ext", days)          # its chain sent root-side first
+    sh("openssl", "req", "-newkey", *ec256, "-nodes", "-keyout", "cnonly.key", "-out", "cnonly.csr",
+       "-subj", "/CN=localhost")
+    sh("openssl", "x509", "-req", "-in", "cnonly.csr", "-CA", "inter.pem", "-CAkey", "inter.key",
+       "-CAcreateserial", "-out", "cnonly.pem", "-sha256", "-extfile", "cnonly.ext", *days)
+    sh("openssl", "req", "-newkey", *ec256, "-nodes", "-keyout", "cnwrongsan.key", "-out", "cnwrongsan.csr",
+       "-subj", "/CN=localhost")
+    sh("openssl", "x509", "-req", "-in", "cnwrongsan.csr", "-CA", "inter.pem", "-CAkey", "inter.key",
+       "-CAcreateserial", "-out", "cnwrongsan.pem", "-sha256", "-extfile", "cnwrongsan.ext", *days)
+    # an RSA leaf the root signs with RSA-PSS
+    sh("openssl", "req", "-newkey", *rsa, "-nodes", "-keyout", "pssleaf.key", "-out", "pssleaf.csr",
+       "-subj", "/CN=pssleaf")
+    sh("openssl", "x509", "-req", "-in", "pssleaf.csr", "-CA", "root.pem", "-CAkey", "root.key", "-CAcreateserial",
+       "-out", "pssleaf.pem", "-sha256", "-sigopt", "rsa_padding_mode:pss", "-sigopt", "rsa_pss_saltlen:32",
+       "-extfile", "localhost.ext", *days)
+    def chain(name, *parts):
+        with open(os.path.join(WORK, name + "-chain.pem"), "w") as f:
+            for part in parts:
+                f.write(open(os.path.join(WORK, part + ".pem")).read())
+    chain("deep", "pl0sub", "pl0")
+    chain("undernotca", "notca")
+    chain("undernocertsign", "nocertsign")
+    chain("critical", "inter")
+    chain("clientauth", "inter")
+    chain("cnonly", "inter")
+    chain("cnwrongsan", "inter")
+    chain("unordered", "mid1", "mid2")
     # a chain file for each leaf under the intermediate
     for name in ("ecleaf", "nameonly", "wrong", "expired", "edleaf"):
         with open(os.path.join(WORK, name + "-chain.pem"), "w") as f:
@@ -195,7 +245,7 @@ def main():
     case("TLS 1.2, ECDSA chain (P-256 leaf, P-384 intermediate, RSA root)", Server("ecleaf", NO13),
          CA + get + ["--expect", "TLSv1.2"], {"result": "ok", "conn0.protocol": "0303"})
     case("TLS 1.2 only in GFOpenTLS (BearSSL alone)", Server("ecleaf"),
-         CA + get + ["--max", "12", "--expect", "TLSv1.2"], {"result": "ok", "conn0.protocol": "0303", "_service": False})
+         CA + get + ["--max", "12", "--expect", "TLSv1.2"], {"result": "ok", "conn0.protocol": "0303"})
     case("session resumption by session ID (3 connections)", Server("ecleaf", NO13),
          CA + ["--connections", "3"], {"result": "ok", "conn0.resumed": "0", "conn1.resumed": "1",
                                         "conn2.resumed": "1"})
@@ -274,7 +324,7 @@ def main():
          CA + ["--small", "--send", "GET /big.bin HTTP/1.0\\r\\n\\r\\n"],
          {"result": "ok", "conn0.protocol": "0304", "conn0.received": str((1 << 20) + len(WWW_HEADER))})
     case("OT_SetVersion: TLS 1.2 at most", Server("ecleaf"), CA + get + ["--version", "0,12"],
-         {"result": "ok", "conn0.protocol": "0303", "_service": False})
+         {"result": "ok", "conn0.protocol": "0303"})
     case("OT_SetVersion: TLS 1.3 only, TLS 1.2 server", Server("ecleaf", NO13), CA + ["--version", "13,13"],
          {"result": "fail", "conn0.error": "-7"})
     case("OT_SetVersion: a bad range", Server("ecleaf"), CA + ["--version", "13,12"],
@@ -332,6 +382,24 @@ def main():
          {"result": "fail", "conn0.error": "-11", "conn0.verify": "-11", "conn0.chain": "2"})
     case("OTV_REPORT, resumed TLS 1.3: no certificate sent, so OTERR_STATE", Server("ecleaf"), R + get + ["--connections", "2"],
          {"result": "ok", "conn0.chain": "2", "conn1.resumed": "1", "conn1.verify": "-15", "conn1.chain": "-15"})
+    # our own chain check (DESIGN.md section 15, step 3)
+    case("X.509: a pathLenConstraint of 0 with a CA under it", Server("deep"), CA,
+         {"result": "fail", "conn0.error": "-13"})
+    case("X.509: an intermediate that is not a CA", Server("undernotca"), CA,
+         {"result": "fail", "conn0.error": "-13"})
+    case("X.509: an intermediate without keyCertSign", Server("undernocertsign"), CA,
+         {"result": "fail", "conn0.error": "-13"})
+    case("X.509: an unknown critical extension", Server("critical"), CA,
+         {"result": "fail", "conn0.error": "-13"})
+    case("X.509: an extendedKeyUsage without serverAuth", Server("clientauth"), CA,
+         {"result": "fail", "conn0.error": "-13"})
+    case("X.509: the chain sent in the wrong order", Server("unordered"), CA, {"result": "ok"})
+    case("X.509: the host in the CN, no subjectAltName", Server("cnonly"), CA, {"result": "ok"})
+    case("X.509: the CN ignored when there is a dNSName", Server("cnwrongsan"), CA,
+         {"result": "fail", "conn0.error": "-11"})
+    case("X.509: an RSA-PSS signature on the certificate", Server("pssleaf"), CA, {"result": "ok"})
+    case("X.509: an RSA-PSS signature on the certificate, TLS 1.2", Server("pssleaf", NO13), CA,
+         {"result": "ok", "conn0.protocol": "0303"})
     case("OTV_NO_HOSTNAME", Server("wrong"), CA + ["--verify", "nohost"], {"result": "ok"})
     case("an IP address in the certificate", Server("ecleaf"), CA, {"result": "ok"}, host="127.0.0.1")
     case("an IP address not in the certificate", Server("nameonly"), CA,

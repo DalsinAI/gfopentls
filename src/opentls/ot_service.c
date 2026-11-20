@@ -173,7 +173,7 @@ static LONG call(UWORD op, ULONG arg, const ULONG extra[4], struct ot_sbuf buf[4
     return status;
 }
 
-int ot_svc_verify(ULONG alg, ULONG digest, const unsigned char *spki, size_t spki_len,
+int ot_svc_verify(ULONG alg, ULONG digest, ULONG salt, const unsigned char *spki, size_t spki_len,
                   const unsigned char *data, size_t data_len, const unsigned char *sig, size_t sig_len)
 {
     struct ot_sbuf buf[4];
@@ -181,6 +181,7 @@ int ot_svc_verify(ULONG alg, ULONG digest, const unsigned char *spki, size_t spk
     if (!spki || !ot_svc_ready(0)) return -1;
     memset(buf, 0, sizeof buf);
     extra[0] = digest;
+    extra[1] = salt;
     buf[0].in = spki;
     buf[0].length = (ULONG)spki_len;
     buf[1].in = data;

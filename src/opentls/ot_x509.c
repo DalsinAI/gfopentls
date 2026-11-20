@@ -1,14 +1,10 @@
-/* GFOpenTLS: certificate checks. BearSSL's "minimal" X.509 engine does the
- * chain, the dates and DNS names; this wrapper around it adds what GFOpenTLS
+/* GFOpenTLS: certificate checks, our own since 1.8 (the chain, the
+ * signatures, dates, constraints, names and addresses), and what GFOpenTLS
  * promises on top: the server's certificate and its SHA-256 fingerprint
- * kept for the caller, pinned certificates, the verify modes, and
- * certificates for IP addresses (which the minimal engine does not match),
- * and for TLS 1.3 server certificates with Ed25519 keys (which it cannot
- * read at all; 20 October 2026).
+ * kept for the caller, pinned certificates and the verify modes.
  * MIT licensed and free. Copyright (c) 2026 AmiCradle Team. */
 #include "ot_internal.h"
-
-#define INNER(x) (&(x)->minimal.vtable)
+#include <gfopencrypto/gfopencrypto.h>
 
 /* ---- a small DER reader, for the subjectAltName and CN ---- */
 
@@ -115,16 +111,21 @@ void ot_cert_name(const unsigned char *der, size_t len, char *out, size_t outlen
     }
 }
 
-/* ---- an Ed25519 leaf (TLS 1.3) ----
+/* ---- the chain check ----
  *
- * BearSSL's minimal engine knows RSA and EC keys only. When the server's
- * certificate has an Ed25519 key, the engine is given the chain from the
- * second certificate on (treated as its end entity, with no name check),
- * which takes that certificate to a trusted CA as usual; the leaf is
- * checked here: that the certificate after it is a CA, that its issuer
- * name is that CA's subject, its signature under the CA's key, its dates,
- * and the host name or address. A leaf issued straight by a trust anchor
- * is checked against the anchor. */
+ * RFC 5280's path validation, as far as a TLS client needs it. From the
+ * server's certificate, each issuer is looked for first among the trust
+ * anchors (by name, then its key checks the signature), then among the
+ * other certificates the server sent, in any order. A CA on the way
+ * needs basicConstraints with cA, a pathLenConstraint that allows the
+ * CAs below it, keyCertSign when it has a keyUsage, and its dates. The
+ * server's certificate needs its dates, serverAuth when it has an
+ * extendedKeyUsage, and the host name (subjectAltName dNSName, or the
+ * subject's CN when there are none) or the address. An unknown critical
+ * extension fails, as do name and policy constraints, which are not
+ * implemented. Signatures: RSA PKCS #1 v1.5 (SHA-1, SHA-256, SHA-384,
+ * SHA-512), RSA-PSS, ECDSA on P-256, P-384 and P-521, and Ed25519; on the
+ * services card when there is one. RSA keys from 1024 to 8192 bits. */
 
 /* the next element whole (tag and length too): where it starts and ends */
 static int der_whole(struct der *d, unsigned *tag, struct der *content, struct der *whole)
@@ -136,24 +137,31 @@ static int der_whole(struct der *d, unsigned *tag, struct der *content, struct d
     return 1;
 }
 
+static int same(const struct der *d, const unsigned char *p, size_t n)
+{
+    return d->len == n && !memcmp(d->p, p, n);
+}
+
 struct leaf_parts {
     struct der tbs;          /* whole, for the signature */
     struct der issuer;       /* whole */
     struct der validity;     /* contents */
     struct der subject;      /* whole */
-    struct der spki;         /* contents */
-    struct der exts;         /* contents of [3], or empty */
-    struct der sigalg;       /* the outer algorithm's OID */
+    struct der spki;         /* whole */
+    struct der exts;         /* contents of the SEQUENCE in [3], or empty */
+    struct der sigalg;       /* the outer AlgorithmIdentifier's contents: OID, parameters */
     struct der sig;          /* the BIT STRING's bytes, past the unused-bits count */
 };
 
 static int leaf_parse(const unsigned char *der, size_t len, struct leaf_parts *lp)
 {
-    struct der d = { der, len }, cert, tbs, e, w, alg, oid;
+    struct der d, cert, tbs, e, w;
     unsigned tag;
     int field = 0;
     memset(lp, 0, sizeof *lp);
-    if (!der_next(&d, &tag, &cert) || tag != 0x30) return 0;
+    d.p = der;
+    d.len = len;
+    if (!der_next(&d, &tag, &cert) || tag != 0x30 || d.len) return 0;
     if (!der_whole(&cert, &tag, &tbs, &lp->tbs) || tag != 0x30) return 0;
     while (der_whole(&tbs, &tag, &e, &w)) {
         if (tag == 0xA0 && field == 0) continue;            /* version */
@@ -161,7 +169,7 @@ static int leaf_parse(const unsigned char *der, size_t len, struct leaf_parts *l
         case 2: lp->issuer = w; break;
         case 3: lp->validity = e; break;
         case 4: lp->subject = w; break;
-        case 5: lp->spki = e; break;
+        case 5: lp->spki = w; break;
         default:
             if (tag == 0xA3) {
                 struct der x;
@@ -171,89 +179,391 @@ static int leaf_parse(const unsigned char *der, size_t len, struct leaf_parts *l
             break;
         }
     }
-    if (field < 6) return 0;
-    if (!der_next(&cert, &tag, &alg) || tag != 0x30) return 0;
-    if (!der_next(&alg, &tag, &oid) || tag != 0x06) return 0;
-    lp->sigalg = oid;
+    if (field < 6 || tbs.len) return 0;
+    if (!der_next(&cert, &tag, &lp->sigalg) || tag != 0x30) return 0;
     if (!der_next(&cert, &tag, &lp->sig) || tag != 0x03 || lp->sig.len < 2 || lp->sig.p[0]) return 0;
     ++lp->sig.p;
     --lp->sig.len;
+    return !cert.len;
+}
+
+static const unsigned char oid_rsa[] = { 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01 };
+static const unsigned char oid_ec[] = { 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01 };
+static const unsigned char oid_p256[] = { 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07 };
+static const unsigned char oid_p384[] = { 0x2B, 0x81, 0x04, 0x00, 0x22 };
+static const unsigned char oid_p521[] = { 0x2B, 0x81, 0x04, 0x00, 0x23 };
+static const unsigned char oid_ed25519[] = { 0x2B, 0x65, 0x70 };
+
+/* an INTEGER's value without its leading zeros */
+static int read_uint(struct der *d, struct der *v)
+{
+    unsigned tag;
+    if (!der_next(d, &tag, v) || tag != 0x02 || !v->len || (v->p[0] & 0x80)) return 0;
+    while (v->len && !v->p[0]) { ++v->p; --v->len; }
+    return v->len != 0;
+}
+
+static unsigned key_read(const struct der *spki, struct ot_key *k)
+{
+    struct der d = *spki, s, alg, oid, bits, curve;
+    unsigned tag;
+    memset(k, 0, sizeof *k);
+    if (!der_next(&d, &tag, &s) || tag != 0x30) return BR_ERR_X509_INVALID_VALUE;
+    if (!der_next(&s, &tag, &alg) || tag != 0x30 || !der_next(&alg, &tag, &oid) || tag != 0x06)
+        return BR_ERR_X509_INVALID_VALUE;
+    if (!der_next(&s, &tag, &bits) || tag != 0x03 || bits.len < 2 || bits.p[0]) return BR_ERR_X509_INVALID_VALUE;
+    ++bits.p;
+    --bits.len;
+    k->spki = spki->p;
+    k->spki_len = spki->len;
+    if (same(&oid, oid_ed25519, sizeof oid_ed25519)) {
+        if (bits.len != 32) return BR_ERR_X509_INVALID_VALUE;
+        k->type = OT_KEY_ED25519;
+        k->ed = bits.p;
+        return 0;
+    }
+    if (same(&oid, oid_rsa, sizeof oid_rsa)) {
+        struct der seq, n, e;
+        if (!der_next(&bits, &tag, &seq) || tag != 0x30 || !read_uint(&seq, &n) || !read_uint(&seq, &e))
+            return BR_ERR_X509_INVALID_VALUE;
+        if (n.len < 128) return BR_ERR_X509_WEAK_PUBLIC_KEY;
+        if (n.len > OC_RSA_MAX_BYTES || e.len > 8) return BR_ERR_X509_LIMIT_EXCEEDED;
+        k->type = BR_KEYTYPE_RSA;
+        k->pk.key_type = BR_KEYTYPE_RSA;
+        k->pk.key.rsa.n = (unsigned char *)n.p;
+        k->pk.key.rsa.nlen = n.len;
+        k->pk.key.rsa.e = (unsigned char *)e.p;
+        k->pk.key.rsa.elen = e.len;
+        return 0;
+    }
+    if (same(&oid, oid_ec, sizeof oid_ec)) {
+        int c;
+        size_t plen;
+        if (!der_next(&alg, &tag, &curve) || tag != 0x06) return BR_ERR_X509_UNSUPPORTED;
+        if (same(&curve, oid_p256, sizeof oid_p256)) { c = BR_EC_secp256r1; plen = 65; }
+        else if (same(&curve, oid_p384, sizeof oid_p384)) { c = BR_EC_secp384r1; plen = 97; }
+        else if (same(&curve, oid_p521, sizeof oid_p521)) { c = BR_EC_secp521r1; plen = 133; }
+        else return BR_ERR_X509_UNSUPPORTED;
+        if (bits.len != plen || bits.p[0] != 4) return BR_ERR_X509_INVALID_VALUE;
+        k->type = BR_KEYTYPE_EC;
+        k->pk.key_type = BR_KEYTYPE_EC;
+        k->pk.key.ec.curve = c;
+        k->pk.key.ec.q = (unsigned char *)bits.p;
+        k->pk.key.ec.qlen = plen;
+        return 0;
+    }
+    return BR_ERR_X509_UNSUPPORTED;
+}
+
+/* DER: a tag and length at p (when p), and their size */
+static size_t put_head(unsigned char *p, unsigned tag, size_t len)
+{
+    size_t n = len < 0x80 ? 2 : len < 0x100 ? 3 : 4;
+    if (p) {
+        p[0] = (unsigned char)tag;
+        if (n == 2) p[1] = (unsigned char)len;
+        else if (n == 3) { p[1] = 0x81; p[2] = (unsigned char)len; }
+        else { p[1] = 0x82; p[2] = (unsigned char)(len >> 8); p[3] = (unsigned char)len; }
+    }
+    return n;
+}
+
+static size_t put_bytes(unsigned char *p, const unsigned char *d, size_t len)
+{
+    if (p) memcpy(p, d, len);
+    return len;
+}
+
+static size_t put_uint(unsigned char *p, const unsigned char *v, size_t len)
+{
+    size_t pad = v[0] & 0x80 ? 1 : 0, n = put_head(p, 0x02, len + pad);
+    if (p && pad) p[n] = 0;
+    put_bytes(p ? p + n + pad : NULL, v, len);
+    return n + pad + len;
+}
+
+/* an anchor's key as a SubjectPublicKeyInfo (to out when out; its length) */
+static size_t anchor_spki(const br_x509_pkey *pk, unsigned char *out)
+{
+    unsigned char *p = out;
+    size_t keylen, alglen, inner, n;
+#define AT(o) (out ? out + (o) : NULL)
+    if (pk->key_type == BR_KEYTYPE_RSA) {
+        size_t nl = put_uint(NULL, pk->key.rsa.n, pk->key.rsa.nlen);
+        size_t el = put_uint(NULL, pk->key.rsa.e, pk->key.rsa.elen);
+        inner = put_head(NULL, 0x30, nl + el) + nl + el;
+        keylen = put_head(NULL, 0x03, inner + 1) + 1 + inner;
+        alglen = 2 + sizeof oid_rsa + 2;
+        n = put_head(p, 0x30, put_head(NULL, 0x30, alglen) + alglen + keylen);
+        n += put_head(AT(n), 0x30, alglen);
+        n += put_head(AT(n), 0x06, sizeof oid_rsa);
+        n += put_bytes(AT(n), oid_rsa, sizeof oid_rsa);
+        n += put_head(AT(n), 0x05, 0);
+        n += put_head(AT(n), 0x03, inner + 1);
+        if (out) out[n] = 0;
+        ++n;
+        n += put_head(AT(n), 0x30, nl + el);
+        n += put_uint(AT(n), pk->key.rsa.n, pk->key.rsa.nlen);
+        n += put_uint(AT(n), pk->key.rsa.e, pk->key.rsa.elen);
+        return n;
+    }
+    if (pk->key_type == BR_KEYTYPE_EC) {
+        const unsigned char *c = pk->key.ec.curve == BR_EC_secp256r1 ? oid_p256
+                               : pk->key.ec.curve == BR_EC_secp384r1 ? oid_p384 : oid_p521;
+        size_t cl = pk->key.ec.curve == BR_EC_secp256r1 ? sizeof oid_p256 : sizeof oid_p384;
+        if (pk->key.ec.curve != BR_EC_secp256r1 && pk->key.ec.curve != BR_EC_secp384r1
+            && pk->key.ec.curve != BR_EC_secp521r1) return 0;
+        alglen = 2 + sizeof oid_ec + 2 + cl;
+        keylen = put_head(NULL, 0x03, pk->key.ec.qlen + 1) + 1 + pk->key.ec.qlen;
+        n = put_head(p, 0x30, put_head(NULL, 0x30, alglen) + alglen + keylen);
+        n += put_head(AT(n), 0x30, alglen);
+        n += put_head(AT(n), 0x06, sizeof oid_ec);
+        n += put_bytes(AT(n), oid_ec, sizeof oid_ec);
+        n += put_head(AT(n), 0x06, cl);
+        n += put_bytes(AT(n), c, cl);
+        n += put_head(AT(n), 0x03, pk->key.ec.qlen + 1);
+        if (out) out[n] = 0;
+        ++n;
+        n += put_bytes(AT(n), pk->key.ec.q, pk->key.ec.qlen);
+        return n;
+    }
+#undef AT
+    return 0;
+}
+
+static int same_key(const struct ot_key *k, const br_x509_pkey *pk)
+{
+    if (k->type != pk->key_type) return 0;
+    if (k->type == BR_KEYTYPE_RSA)
+        return k->pk.key.rsa.nlen == pk->key.rsa.nlen && !memcmp(k->pk.key.rsa.n, pk->key.rsa.n, pk->key.rsa.nlen)
+            && k->pk.key.rsa.elen == pk->key.rsa.elen && !memcmp(k->pk.key.rsa.e, pk->key.rsa.e, pk->key.rsa.elen);
+    if (k->type == BR_KEYTYPE_EC)
+        return k->pk.key.ec.curve == pk->key.ec.curve && k->pk.key.ec.qlen == pk->key.ec.qlen
+            && !memcmp(k->pk.key.ec.q, pk->key.ec.q, pk->key.ec.qlen);
+    return 0;
+}
+
+static const br_hash_class *hash_by_oid(const struct der *oid, const unsigned char **hoid)
+{
+    static const unsigned char sha2[] = { 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02 };
+    static const unsigned char sha1[] = { 0x2B, 0x0E, 0x03, 0x02, 0x1A };
+    if (same(oid, sha1, sizeof sha1)) { *hoid = BR_HASH_OID_SHA1; return &br_sha1_vtable; }
+    if (oid->len != sizeof sha2 + 1 || memcmp(oid->p, sha2, sizeof sha2)) return NULL;
+    switch (oid->p[sizeof sha2]) {
+    case 1: *hoid = BR_HASH_OID_SHA256; return &br_sha256_vtable;
+    case 2: *hoid = BR_HASH_OID_SHA384; return &br_sha384_vtable;
+    case 3: *hoid = BR_HASH_OID_SHA512; return &br_sha512_vtable;
+    }
+    return NULL;
+}
+
+/* RSASSA-PSS-params: the hash (MGF1 must use the same) and the salt length */
+static const br_hash_class *pss_params(struct der params, size_t *salt)
+{
+    static const unsigned char mgf1[] = { 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x08 };
+    struct der seq, f, alg, oid, mgfhash;
+    const br_hash_class *h = &br_sha1_vtable, *mh = &br_sha1_vtable;
+    const unsigned char *hoid;
+    unsigned tag;
+    *salt = 20;
+    if (!der_next(&params, &tag, &seq) || tag != 0x30) return NULL;
+    while (der_next(&seq, &tag, &f)) {
+        if (tag == 0xA0) {
+            if (!der_next(&f, &tag, &alg) || tag != 0x30 || !der_next(&alg, &tag, &oid) || tag != 0x06
+                || !(h = hash_by_oid(&oid, &hoid))) return NULL;
+        } else if (tag == 0xA1) {
+            if (!der_next(&f, &tag, &alg) || tag != 0x30 || !der_next(&alg, &tag, &oid) || tag != 0x06
+                || !same(&oid, mgf1, sizeof mgf1) || !der_next(&alg, &tag, &mgfhash) || tag != 0x30
+                || !der_next(&mgfhash, &tag, &oid) || tag != 0x06 || !(mh = hash_by_oid(&oid, &hoid)))
+                return NULL;
+        } else if (tag == 0xA2) {
+            struct der v;
+            size_t i;
+            if (!der_next(&f, &tag, &v) || tag != 0x02 || !v.len || v.len > 2 || (v.p[0] & 0x80)) return NULL;
+            for (*salt = 0, i = 0; i < v.len; ++i) *salt = (*salt << 8) | v.p[i];
+        } else if (tag == 0xA3) {
+            struct der v;
+            if (!der_next(&f, &tag, &v) || tag != 0x02 || v.len != 1 || v.p[0] != 1) return NULL;
+        } else {
+            return NULL;
+        }
+    }
+    return h == mh ? h : NULL;
+}
+
+/* the services card may check this chain's signatures */
+static int x509_svc_on(const struct ot_x509 *x)
+{
+    return x->conn && !(x->conn->ctx->flags & OTCF_NO_OFFLOAD);
+}
+
+/* the certificate's signature under key k: 0, or why not */
+static unsigned cert_signature(struct ot_x509 *x, const struct leaf_parts *cp, const struct ot_key *k)
+{
+    static const unsigned char rsa_pre[] = { 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01 };
+    static const unsigned char ecdsa_sha1[] = { 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x01 };
+    static const unsigned char ecdsa_sha2[] = { 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03 };
+    const struct ot_impls *m = x->impls;
+    const br_hash_class *h = NULL;
+    const unsigned char *hoid = NULL;
+    unsigned char hv[64], got[64];
+    br_hash_compat_context hc;
+    struct der a = cp->sigalg, oid;
+    unsigned tag;
+    ULONG alg = 0, digest;
+    size_t hl, salt = 0;
+    int sv;
+    if (!der_next(&a, &tag, &oid) || tag != 0x06) return BR_ERR_X509_INVALID_VALUE;
+    if (same(&oid, oid_ed25519, sizeof oid_ed25519)) {
+        if (k->type != OT_KEY_ED25519) return BR_ERR_X509_WRONG_KEY_TYPE;
+        if (cp->sig.len != 64) return BR_ERR_X509_BAD_SIGNATURE;
+        if (x509_svc_on(x)
+            && (sv = ot_svc_verify(OTK_ED25519, 0, 0, k->spki, k->spki_len, cp->tbs.p, cp->tbs.len,
+                                   cp->sig.p, cp->sig.len)) >= 0)
+            return sv ? 0 : BR_ERR_X509_BAD_SIGNATURE;
+        return ot_glue_ed25519(cp->sig.p, k->ed, cp->tbs.p, cp->tbs.len) ? 0 : BR_ERR_X509_BAD_SIGNATURE;
+    }
+    if (oid.len == sizeof rsa_pre + 1 && !memcmp(oid.p, rsa_pre, sizeof rsa_pre)) {
+        switch (oid.p[sizeof rsa_pre]) {
+        case 5: h = &br_sha1_vtable; hoid = BR_HASH_OID_SHA1; break;
+        case 11: h = &br_sha256_vtable; hoid = BR_HASH_OID_SHA256; break;
+        case 12: h = &br_sha384_vtable; hoid = BR_HASH_OID_SHA384; break;
+        case 13: h = &br_sha512_vtable; hoid = BR_HASH_OID_SHA512; break;
+        case 10: h = pss_params(a, &salt); break;
+        }
+        if (!h) return BR_ERR_X509_UNSUPPORTED;
+        alg = oid.p[sizeof rsa_pre] == 10 ? OTK_RSA_PSS : OTK_RSA_PKCS1;
+        if (k->type != BR_KEYTYPE_RSA) return BR_ERR_X509_WRONG_KEY_TYPE;
+    } else if (same(&oid, ecdsa_sha1, sizeof ecdsa_sha1)) {
+        h = &br_sha1_vtable;
+        alg = OTK_ECDSA;
+    } else if (oid.len == sizeof ecdsa_sha2 + 1 && !memcmp(oid.p, ecdsa_sha2, sizeof ecdsa_sha2)) {
+        unsigned last = oid.p[sizeof ecdsa_sha2];
+        h = last == 2 ? &br_sha256_vtable : last == 3 ? &br_sha384_vtable : last == 4 ? &br_sha512_vtable : NULL;
+        if (!h) return BR_ERR_X509_UNSUPPORTED;
+        alg = OTK_ECDSA;
+    } else {
+        return BR_ERR_X509_UNSUPPORTED;
+    }
+    if (alg == OTK_ECDSA && k->type != BR_KEYTYPE_EC) return BR_ERR_X509_WRONG_KEY_TYPE;
+    hl = (h->desc >> BR_HASHDESC_OUT_OFF) & BR_HASHDESC_OUT_MASK;
+    h->init(&hc.vtable);
+    h->update(&hc.vtable, cp->tbs.p, cp->tbs.len);
+    h->out(&hc.vtable, hv);
+    digest = hl == 20 ? OTK_SHA1 : hl == 32 ? OTK_SHA256 : hl == 48 ? OTK_SHA384 : OTK_SHA512;
+    if (x509_svc_on(x)
+        && (sv = ot_svc_verify(alg, digest, (ULONG)salt, k->spki, k->spki_len, hv, hl, cp->sig.p, cp->sig.len)) >= 0)
+        return sv ? 0 : BR_ERR_X509_BAD_SIGNATURE;
+    if (alg == OTK_ECDSA)
+        return m->ecdsa_vrfy(m->ec, hv, hl, &k->pk.key.ec, cp->sig.p, cp->sig.len) ? 0 : BR_ERR_X509_BAD_SIGNATURE;
+    if (alg == OTK_RSA_PSS)
+        return ot_rsa_pss(m, &k->pk.key.rsa, h, hv, salt, cp->sig.p, cp->sig.len) ? 0 : BR_ERR_X509_BAD_SIGNATURE;
+    if (!m->rsa_vrfy(cp->sig.p, cp->sig.len, hoid, hl, &k->pk.key.rsa, got) || memcmp(got, hv, hl))
+        return BR_ERR_X509_BAD_SIGNATURE;
+    return 0;
+}
+
+/* what the extensions say */
+struct ext_info {
+    int ca;                          /* basicConstraints cA */
+    long pathlen;                    /* its pathLenConstraint; -1 none */
+    int has_ku;
+    unsigned ku;                     /* keyUsage's first byte (digitalSignature 0x80 ... keyCertSign 0x04) */
+    int has_eku, eku_server;         /* extendedKeyUsage, and serverAuth or any in it */
+    int has_san_dns;                 /* a dNSName in subjectAltName */
+};
+
+/* a critical certificatePolicies is fine when its only qualifiers are CPS pointers */
+static int policies_ok(struct der v)
+{
+    static const unsigned char cps[] = { 0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x02, 0x01 };
+    struct der seq, info, oid, quals, q, qid;
+    unsigned tag;
+    if (!der_next(&v, &tag, &seq) || tag != 0x30) return 0;
+    while (der_next(&seq, &tag, &info)) {
+        if (tag != 0x30 || !der_next(&info, &tag, &oid) || tag != 0x06) return 0;
+        if (!der_next(&info, &tag, &quals)) continue;
+        if (tag != 0x30) return 0;
+        while (der_next(&quals, &tag, &q))
+            if (tag != 0x30 || !der_next(&q, &tag, &qid) || tag != 0x06 || !same(&qid, cps, sizeof cps)) return 0;
+    }
     return 1;
 }
 
-/* the leaf's SubjectPublicKeyInfo, whole */
-int ot_x509_spki(const struct ot_x509 *x, const unsigned char **spki, size_t *len)
+static unsigned read_exts(struct der exts, struct ext_info *e)
 {
-    const unsigned char *der = x->leaf;
-    size_t dlen = x->leaf_len;
-    struct der d, cert, tbs, e, w;
+    static const unsigned char server_auth[] = { 0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01 };
+    static const unsigned char any_eku[] = { 0x55, 0x1D, 0x25, 0x00 };
+    static const unsigned char pkix_pe[] = { 0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x01 };
+    struct der ext, oid, v, x;
     unsigned tag;
-    int field = 0;
-    if (!x->leaf_ok) {
-        if (!x->chain_ok || x->chain_count < 1) return 0;
-        der = x->chain + x->chain_off[0];
-        dlen = x->chain_end[0] - x->chain_off[0];
-    }
-    d.p = der;
-    d.len = dlen;
-    if (!der_next(&d, &tag, &cert) || tag != 0x30) return 0;
-    if (!der_next(&cert, &tag, &tbs) || tag != 0x30) return 0;
-    while (der_whole(&tbs, &tag, &e, &w)) {
-        if (tag == 0xA0 && field == 0) continue;            /* version */
-        if (field++ == 5) {
-            if (tag != 0x30) return 0;
-            *spki = w.p;
-            *len = w.len;
-            return 1;
+    memset(e, 0, sizeof *e);
+    e->pathlen = -1;
+    while (der_next(&exts, &tag, &ext)) {
+        int critical = 0;
+        if (tag != 0x30 || !der_next(&ext, &tag, &oid) || tag != 0x06 || !der_next(&ext, &tag, &v))
+            return BR_ERR_X509_INVALID_VALUE;
+        if (tag == 0x01) {
+            if (v.len != 1) return BR_ERR_X509_INVALID_VALUE;
+            critical = v.p[0] != 0;
+            if (!der_next(&ext, &tag, &v)) return BR_ERR_X509_INVALID_VALUE;
+        }
+        if (tag != 0x04 || ext.len) return BR_ERR_X509_INVALID_VALUE;
+        if (oid.len == 3 && oid.p[0] == 0x55 && oid.p[1] == 0x1D) {
+            switch (oid.p[2]) {
+            case 19: {                                   /* basicConstraints */
+                struct der seq;
+                int have;
+                if (!der_next(&v, &tag, &seq) || tag != 0x30) return BR_ERR_X509_INVALID_VALUE;
+                have = der_next(&seq, &tag, &x);
+                if (have && tag == 0x01) {
+                    if (x.len != 1) return BR_ERR_X509_INVALID_VALUE;
+                    e->ca = x.p[0] != 0;
+                    have = der_next(&seq, &tag, &x);
+                }
+                if (have && tag == 0x02) {
+                    if (!x.len || x.len > 2 || (x.p[0] & 0x80)) return BR_ERR_X509_INVALID_VALUE;
+                    e->pathlen = x.len == 1 ? x.p[0] : (x.p[0] << 8) | x.p[1];
+                }
+                break;
+            }
+            case 15:                                     /* keyUsage */
+                if (!der_next(&v, &tag, &x) || tag != 0x03 || !x.len || x.p[0] > 7) return BR_ERR_X509_INVALID_VALUE;
+                e->has_ku = 1;
+                e->ku = x.len > 1 ? x.p[1] : 0;
+                break;
+            case 37: {                                   /* extendedKeyUsage */
+                struct der seq;
+                if (!der_next(&v, &tag, &seq) || tag != 0x30) return BR_ERR_X509_INVALID_VALUE;
+                e->has_eku = 1;
+                while (der_next(&seq, &tag, &x))
+                    if (tag == 0x06 && (same(&x, server_auth, sizeof server_auth) || same(&x, any_eku, sizeof any_eku)))
+                        e->eku_server = 1;
+                break;
+            }
+            case 17: {                                   /* subjectAltName */
+                struct der seq;
+                if (!der_next(&v, &tag, &seq) || tag != 0x30) return BR_ERR_X509_INVALID_VALUE;
+                while (der_next(&seq, &tag, &x))
+                    if (tag == 0x82) e->has_san_dns = 1;
+                break;
+            }
+            case 32:                                     /* certificatePolicies */
+                if (critical && !policies_ok(v)) return BR_ERR_X509_CRITICAL_EXTENSION;
+                break;
+            case 35: case 14: case 18: case 9: case 31: case 46:   /* informative, or revocation */
+                break;
+            default:
+                if (critical) return BR_ERR_X509_CRITICAL_EXTENSION;
+            }
+        } else if (oid.len == sizeof pkix_pe + 1 && !memcmp(oid.p, pkix_pe, sizeof pkix_pe)
+                   && (oid.p[sizeof pkix_pe] == 1 || oid.p[sizeof pkix_pe] == 11)) {
+            /* authorityInfoAccess, subjectInfoAccess */
+        } else if (critical) {
+            return BR_ERR_X509_CRITICAL_EXTENSION;
         }
     }
     return 0;
-}
-
-/* the key, when the SubjectPublicKeyInfo is Ed25519's (1.3.101.112) */
-static int spki_ed25519(const struct der *spki, unsigned char *key)
-{
-    static const unsigned char oid[] = { 0x2B, 0x65, 0x70 };
-    struct der s = *spki, alg, o, bits;
-    unsigned tag;
-    if (!der_next(&s, &tag, &alg) || tag != 0x30) return 0;
-    if (!der_next(&alg, &tag, &o) || tag != 0x06 || o.len != 3 || memcmp(o.p, oid, 3)) return 0;
-    if (!der_next(&s, &tag, &bits) || tag != 0x03 || bits.len != 33 || bits.p[0]) return 0;
-    memcpy(key, bits.p + 1, 32);
-    return 1;
-}
-
-/* an extension's value (inside its OCTET STRING), by the last byte of
- * its 2.5.29.x OID */
-static int find_ext(const struct der *exts, unsigned char id, struct der *value)
-{
-    struct der all = *exts, ext, oid, v;
-    unsigned tag;
-    while (der_next(&all, &tag, &ext)) {
-        if (tag != 0x30 || !der_next(&ext, &tag, &oid) || tag != 0x06) continue;
-        if (oid.len != 3 || oid.p[0] != 0x55 || oid.p[1] != 0x1D || oid.p[2] != id) continue;
-        if (!der_next(&ext, &tag, &v)) return 0;
-        if (tag == 0x01 && !der_next(&ext, &tag, &v)) return 0;
-        if (tag != 0x04) return 0;
-        *value = v;
-        return 1;
-    }
-    return 0;
-}
-
-/* a CA: basicConstraints with cA true, and keyCertSign if keyUsage is there */
-static int is_ca(const unsigned char *der, size_t len)
-{
-    struct leaf_parts lp;
-    struct der v, seq, b;
-    unsigned tag;
-    if (!leaf_parse(der, len, &lp) || !find_ext(&lp.exts, 19, &v)) return 0;
-    if (!der_next(&v, &tag, &seq) || tag != 0x30) return 0;
-    if (!der_next(&seq, &tag, &b) || tag != 0x01 || b.len != 1 || !b.p[0]) return 0;
-    if (find_ext(&lp.exts, 15, &v)) {
-        if (!der_next(&v, &tag, &b) || tag != 0x03 || b.len < 2 || !(b.p[1] & 0x04)) return 0;
-    }
-    return 1;
 }
 
 /* days since 1 January of year 0 (proleptic Gregorian), as ot_now() */
@@ -293,6 +603,16 @@ static int read_time(struct der *v, uint32_t *days, uint32_t *secs)
     return 1;
 }
 
+static unsigned check_dates(const struct leaf_parts *cp, uint32_t days, uint32_t secs)
+{
+    struct der v = cp->validity;
+    uint32_t nb_d, nb_s, na_d, na_s;
+    if (!read_time(&v, &nb_d, &nb_s) || !read_time(&v, &na_d, &na_s)) return BR_ERR_X509_BAD_TIME;
+    if (days < nb_d || (days == nb_d && secs < nb_s) || days > na_d || (days == na_d && secs > na_s))
+        return BR_ERR_X509_EXPIRED;
+    return 0;
+}
+
 static int lowerc(int ch) { return ch >= 'A' && ch <= 'Z' ? ch + 32 : ch; }
 
 /* a DNS name in a certificate against the host: no case, and "*" only as
@@ -313,104 +633,164 @@ static int name_matches(const unsigned char *pat, size_t plen, const char *host)
     return 1;
 }
 
-static int leaf_names(const unsigned char *der, size_t len, const char *host)
+/* the host against the dNSNames, or the subject's CNs when there are none */
+static int leaf_names(const unsigned char *der, size_t len, const struct leaf_parts *lp, int has_san_dns,
+                      const char *host)
 {
-    struct der names, n;
+    static const unsigned char oid_cn[] = { 0x55, 0x04, 0x03 };
+    struct der names, n, subj, rdns, set, atv, x;
     unsigned tag;
-    if (!der_san(der, len, &names)) return 0;
-    while (der_next(&names, &tag, &n))
-        if (tag == 0x82 && name_matches(n.p, n.len, host)) return 1;
+    if (has_san_dns) {
+        if (!der_san(der, len, &names)) return 0;
+        while (der_next(&names, &tag, &n))
+            if (tag == 0x82 && name_matches(n.p, n.len, host)) return 1;
+        return 0;
+    }
+    subj = lp->subject;
+    if (!der_next(&subj, &tag, &rdns) || tag != 0x30) return 0;
+    while (der_next(&rdns, &tag, &set))
+        while (der_next(&set, &tag, &atv))
+            if (der_next(&atv, &tag, &x) && tag == 0x06 && same(&x, oid_cn, sizeof oid_cn)
+                && der_next(&atv, &tag, &x) && (tag == 0x0C || tag == 0x13 || tag == 0x16)
+                && name_matches(x.p, x.len, host))
+                return 1;
     return 0;
 }
 
-/* the leaf's signature under the issuer's key */
-static unsigned leaf_signature(struct ot_x509 *x, const struct leaf_parts *lp, const br_x509_pkey *pk)
+static void cert_at(const struct ot_x509 *x, int i, const unsigned char **der, size_t *len)
 {
-    static const unsigned char ecdsa[] = { 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03 };
-    static const unsigned char rsa[] = { 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01 };
-    const struct ot_impls *m = x->impls;
-    const br_hash_class *h = NULL;
-    const unsigned char *oid = NULL;
-    unsigned char hv[64], got[64];
-    br_hash_compat_context hc;
-    size_t hl;
-    unsigned last = lp->sigalg.len ? lp->sigalg.p[lp->sigalg.len - 1] : 0;
-    int is_ec = lp->sigalg.len == 8 && !memcmp(lp->sigalg.p, ecdsa, 7);
-    int is_rsa = lp->sigalg.len == 9 && !memcmp(lp->sigalg.p, rsa, 8);
-    if (is_ec) {
-        h = last == 2 ? m->sha256 : last == 3 ? m->sha384 : last == 4 ? m->sha512 : NULL;
-    } else if (is_rsa) {
-        h = last == 11 ? m->sha256 : last == 12 ? m->sha384 : last == 13 ? m->sha512 : NULL;
-        oid = last == 11 ? BR_HASH_OID_SHA256 : last == 12 ? BR_HASH_OID_SHA384 : BR_HASH_OID_SHA512;
-    }
-    if (!h) return BR_ERR_X509_UNSUPPORTED;
-    hl = (h->desc >> BR_HASHDESC_OUT_OFF) & BR_HASHDESC_OUT_MASK;
-    h->init(&hc.vtable);
-    h->update(&hc.vtable, lp->tbs.p, lp->tbs.len);
-    h->out(&hc.vtable, hv);
-    if (is_ec) {
-        if (pk->key_type != BR_KEYTYPE_EC) return BR_ERR_X509_WRONG_KEY_TYPE;
-        return m->ecdsa_vrfy(m->ec, hv, hl, &pk->key.ec, lp->sig.p, lp->sig.len)
-            ? 0 : BR_ERR_X509_BAD_SIGNATURE;
-    }
-    if (pk->key_type != BR_KEYTYPE_RSA) return BR_ERR_X509_WRONG_KEY_TYPE;
-    if (!m->rsa_vrfy(lp->sig.p, lp->sig.len, oid, hl, &pk->key.rsa, got) || memcmp(got, hv, hl))
-        return BR_ERR_X509_BAD_SIGNATURE;
-    return 0;
+    *der = x->chain + x->chain_off[i];
+    *len = x->chain_end[i] - x->chain_off[i];
 }
 
-static unsigned ed25519_leaf_check(struct ot_x509 *x)
+/* the issuer named by cur among the anchors, its key checking cur's
+ * signature: 0 found and good, else why not (BR_ERR_X509_NOT_TRUSTED: no
+ * anchor of that name) */
+static unsigned by_anchor(struct ot_x509 *x, const struct leaf_parts *cur)
+{
+    unsigned err = BR_ERR_X509_NOT_TRUSTED;
+    size_t i;
+    for (i = 0; i < x->ta_count; ++i) {
+        const br_x509_trust_anchor *ta = &x->ta[i];
+        struct ot_key k;
+        unsigned char *spki = NULL;
+        size_t n;
+        unsigned e;
+        if (!(ta->flags & BR_X509_TA_CA) || ta->dn.len != cur->issuer.len
+            || memcmp(ta->dn.data, cur->issuer.p, cur->issuer.len))
+            continue;
+        memset(&k, 0, sizeof k);
+        k.type = ta->pkey.key_type;
+        k.pk = ta->pkey;
+        if (x509_svc_on(x) && (n = anchor_spki(&ta->pkey, NULL)) && (spki = ot_alloc(n))) {
+            anchor_spki(&ta->pkey, spki);
+            k.spki = spki;
+            k.spki_len = n;
+        }
+        e = cert_signature(x, cur, &k);
+        ot_free(spki);
+        if (!e) return 0;
+        err = e;
+    }
+    return err;
+}
+
+#define CHECKS_NAME(c) ((c)->verify == OTV_FULL || (c)->verify == OTV_REPORT)
+
+/* the whole check of the chain the server sent: 0 when it passes */
+static unsigned chain_check(struct ot_x509 *x)
 {
     struct OTConnection *c = x->conn;
-    struct leaf_parts lp, ip;
-    struct der v;
-    uint32_t nb_d, nb_s, na_d, na_s, days, secs;
-    const br_x509_pkey *pk = NULL;
+    struct leaf_parts cur, cand;
+    struct ext_info ei;
+    struct ot_key k;
+    const unsigned char *der;
+    size_t len, i;
+    uint32_t days, secs, used = 1;
     unsigned err;
-    size_t i;
+    int depth = 0;
 
-    if (!leaf_parse(x->leaf, x->leaf_len, &lp)) return BR_ERR_X509_INVALID_VALUE;
-    if (x->cert_index == 0) {
-        /* no other certificate: the leaf's issuer must be a trust anchor */
-        for (i = 0; i < x->ta_count; ++i) {
-            const br_x509_trust_anchor *ta = &x->ta[i];
-            if ((ta->flags & BR_X509_TA_CA) && ta->dn.len == lp.issuer.len
-                && !memcmp(ta->dn.data, lp.issuer.p, lp.issuer.len)) {
-                pk = &ta->pkey;
-                break;
-            }
-        }
-        if (!pk) return BR_ERR_X509_NOT_TRUSTED;
-    } else {
-        err = (*INNER(x))->end_chain(INNER(x));
-        if (err) return err;
-        if (!x->issuer_ok || !leaf_parse(x->issuer, x->issuer_len, &ip)) return BR_ERR_X509_INVALID_VALUE;
-        if (!is_ca(x->issuer, x->issuer_len)) return BR_ERR_X509_NOT_CA;
-        if (ip.subject.len != lp.issuer.len || memcmp(ip.subject.p, lp.issuer.p, lp.issuer.len))
-            return BR_ERR_X509_DN_MISMATCH;
-        pk = (*INNER(x))->get_pkey((const br_x509_class *const *)INNER(x), NULL);
-        if (!pk) return BR_ERR_X509_NOT_TRUSTED;
-    }
-    if ((err = leaf_signature(x, &lp, pk)) != 0) return err;
-    v = lp.validity;
-    if (!read_time(&v, &nb_d, &nb_s) || !read_time(&v, &na_d, &na_s)) return BR_ERR_X509_BAD_TIME;
+    if (!x->chain_count) return BR_ERR_X509_EMPTY_CHAIN;
+    if (!x->chain_ok) return BR_ERR_X509_LIMIT_EXCEEDED;
     if (!ot_now(&days, &secs)) return BR_ERR_X509_TIME_UNKNOWN;
-    if (days < nb_d || (days == nb_d && secs < nb_s) || days > na_d || (days == na_d && secs > na_s))
-        return BR_ERR_X509_EXPIRED;
-    if (c->verify == OTV_FULL || c->verify == OTV_REPORT) {
+    cert_at(x, 0, &der, &len);
+    if (!leaf_parse(der, len, &cur)) return BR_ERR_X509_INVALID_VALUE;
+    if ((err = read_exts(cur.exts, &ei)) != 0) return err;
+    if (ei.has_eku && !ei.eku_server) return BR_ERR_X509_FORBIDDEN_KEY_USAGE;
+    if ((err = check_dates(&cur, days, secs)) != 0) return err;
+    if (CHECKS_NAME(c)) {
         if (c->ip_len) {
-            if (!ot_cert_has_ip(x->leaf, x->leaf_len, c->ip, (size_t)c->ip_len)) return OT_X509_IP;
-        } else if (!leaf_names(x->leaf, x->leaf_len, c->host)) {
+            if (!ot_cert_has_ip(der, len, c->ip, (size_t)c->ip_len)) return OT_X509_IP;
+        } else if (!leaf_names(der, len, &cur, ei.has_san_dns, c->host)) {
             return BR_ERR_X509_BAD_SERVER_NAME;
         }
     }
+    /* trusted as it is: an anchor that is this certificate's own name and key */
+    if (!key_read(&cur.spki, &k))
+        for (i = 0; i < x->ta_count; ++i)
+            if (!(x->ta[i].flags & BR_X509_TA_CA) && x->ta[i].dn.len == cur.subject.len
+                && !memcmp(x->ta[i].dn.data, cur.subject.p, cur.subject.len) && same_key(&k, &x->ta[i].pkey))
+                return 0;
+    for (;;) {
+        unsigned found_err = BR_ERR_X509_NOT_TRUSTED;
+        int found = 0;
+        if ((err = by_anchor(x, &cur)) == 0) return 0;
+        if (err != BR_ERR_X509_NOT_TRUSTED) found_err = err;
+        for (i = 1; i < (size_t)x->chain_count && !found; ++i) {
+            const unsigned char *cd;
+            size_t cl;
+            if (used & (1UL << i)) continue;
+            cert_at(x, (int)i, &cd, &cl);
+            if (!leaf_parse(cd, cl, &cand) || cand.subject.len != cur.issuer.len
+                || memcmp(cand.subject.p, cur.issuer.p, cur.issuer.len))
+                continue;
+            if ((err = read_exts(cand.exts, &ei)) != 0
+                || (!ei.ca && (err = BR_ERR_X509_NOT_CA) != 0)
+                || (ei.pathlen >= 0 && depth > ei.pathlen && (err = BR_ERR_X509_NOT_CA) != 0)
+                || (ei.has_ku && !(ei.ku & 0x04) && (err = BR_ERR_X509_FORBIDDEN_KEY_USAGE) != 0)
+                || (err = check_dates(&cand, days, secs)) != 0
+                || (err = key_read(&cand.spki, &k)) != 0
+                || (err = cert_signature(x, &cur, &k)) != 0) {
+                found_err = err;
+                continue;
+            }
+            used |= 1UL << i;
+            cur = cand;
+            ++depth;
+            found = 1;
+        }
+        if (!found) return found_err;
+    }
+}
+
+/* the server certificate's own key, for the handshake */
+static unsigned leaf_key(struct ot_x509 *x)
+{
+    struct leaf_parts lp;
+    struct ext_info ei;
+    unsigned err;
+    const unsigned char *der = x->leaf;
+    size_t len = x->leaf_len;
+    x->leaf_key_ok = 0;
+    x->leaf_ed25519 = 0;
+    if (!x->leaf_ok) {
+        if (!x->chain_ok || !x->chain_count) return BR_ERR_X509_INVALID_VALUE;
+        cert_at(x, 0, &der, &len);
+    }
+    if (!leaf_parse(der, len, &lp)) return BR_ERR_X509_INVALID_VALUE;
+    if ((err = key_read(&lp.spki, &x->leaf_key)) != 0) return err;
+    if (x->leaf_key.type == OT_KEY_ED25519) {
+        memcpy(x->ed25519, x->leaf_key.ed, 32);
+        x->leaf_ed25519 = 1;
+    }
+    x->leaf_usages = BR_KEYTYPE_KEYX | BR_KEYTYPE_SIGN;
+    if (!read_exts(lp.exts, &ei) && ei.has_ku)
+        x->leaf_usages = ((ei.ku & 0x38) ? BR_KEYTYPE_KEYX : 0) | ((ei.ku & 0xC0) ? BR_KEYTYPE_SIGN : 0);
+    x->leaf_key_ok = 1;
     return 0;
 }
 
-/* ---- the wrapper engine ---- */
-
-#define CHECKS_NAME(c) ((c)->verify == OTV_FULL || (c)->verify == OTV_REPORT)
-#define INNER_NAME(x) (CHECKS_NAME((x)->conn) && !(x)->conn->ip_len ? (x)->conn->host : NULL)
+/* ---- the engine BearSSL's and our TLS client feed ---- */
 
 static void xw_start_chain(const br_x509_class **ctx, const char *server_name)
 {
@@ -421,12 +801,9 @@ static void xw_start_chain(const br_x509_class **ctx, const char *server_name)
     x->accepted = 0;
     x->leaf_ok = 0;
     x->leaf_len = 0;
+    x->leaf_key_ok = 0;
     x->have_fingerprint = 0;
-    x->deferred = 0;
     x->leaf_ed25519 = 0;
-    x->issuer_ok = 0;
-    x->issuer_len = 0;
-    x->inner_started = 0;
     x->chain_count = 0;
     x->chain_len = 0;
     x->chain_ok = 1;
@@ -434,7 +811,7 @@ static void xw_start_chain(const br_x509_class **ctx, const char *server_name)
     c->peer_name_done = 0;
 }
 
-/* every certificate the server sent, kept for OT_GetPeerCertificateN() */
+/* every certificate the server sent, kept for the checks and for OT_GetPeerCertificateN() */
 static void chain_start(struct ot_x509 *x, uint32_t length)
 {
     size_t need;
@@ -480,21 +857,11 @@ static void chain_append(struct ot_x509 *x, const unsigned char *buf, size_t len
     x->chain_len = x->chain_end[i];
 }
 
-/* the minimal engine checks DNS names only: none for an address, none
- * when the caller turned the check off, none for an Ed25519 leaf's CA */
-static void inner_start(struct ot_x509 *x, const char *name)
-{
-    if (x->inner_started) return;
-    (*INNER(x))->start_chain(INNER(x), name);
-    x->inner_started = 1;
-}
-
 static void xw_start_cert(const br_x509_class **ctx, uint32_t length)
 {
     struct ot_x509 *x = (struct ot_x509 *)(void *)ctx;
     chain_start(x, length);
     if (++x->cert_index == 0) {
-        br_x509_decoder_init(&x->leaf_decoder, NULL, NULL);
         br_sha256_init(&x->leaf_hash);
         x->leaf_len = 0;
         x->leaf_ok = 1;
@@ -506,22 +873,7 @@ static void xw_start_cert(const br_x509_class **ctx, uint32_t length)
                 x->leaf_cap = length;
         }
         if (length > x->leaf_cap) x->leaf_ok = 0;
-        /* a leaf kept whole goes to the engine at its end, once its key
-         * type is known (TLS 1.3 only: BearSSL's handshake wants it streamed) */
-        x->deferred = x->tls13 && x->leaf_ok;
-        if (x->deferred) return;
-        inner_start(x, INNER_NAME(x));
-    } else if (x->cert_index == 1 && x->leaf_ed25519) {
-        x->issuer_len = 0;
-        x->issuer_ok = 0;
-        if (length > x->issuer_cap) {
-            ot_free(x->issuer);
-            x->issuer_cap = 0;
-            if (length <= OT_LEAF_MAX && (x->issuer = ot_alloc(length))) x->issuer_cap = length;
-        }
-        x->issuer_ok = length <= x->issuer_cap;
     }
-    (*INNER(x))->start_cert(INNER(x), length);
 }
 
 static void xw_append(const br_x509_class **ctx, const unsigned char *buf, size_t len)
@@ -530,58 +882,23 @@ static void xw_append(const br_x509_class **ctx, const unsigned char *buf, size_
     chain_append(x, buf, len);
     if (x->cert_index == 0) {
         br_sha256_update(&x->leaf_hash, buf, len);
-        br_x509_decoder_push(&x->leaf_decoder, buf, len);
         if (x->leaf_ok && x->leaf_len + len <= x->leaf_cap) {
             memcpy(x->leaf + x->leaf_len, buf, len);
             x->leaf_len += len;
         } else {
             x->leaf_ok = 0;
         }
-        if (x->deferred) return;
-    } else if (x->cert_index == 1 && x->leaf_ed25519) {
-        if (x->issuer_ok && x->issuer_len + len <= x->issuer_cap) {
-            memcpy(x->issuer + x->issuer_len, buf, len);
-            x->issuer_len += len;
-        } else {
-            x->issuer_ok = 0;
-        }
     }
-    (*INNER(x))->append(INNER(x), buf, len);
 }
 
 static void xw_end_cert(const br_x509_class **ctx)
 {
     struct ot_x509 *x = (struct ot_x509 *)(void *)ctx;
     if (x->cert_index == 0) {
-        struct leaf_parts lp;
         br_sha256_out(&x->leaf_hash, x->fingerprint);
         x->have_fingerprint = 1;
-        if (x->deferred) {
-            if (x->leaf_ok && leaf_parse(x->leaf, x->leaf_len, &lp) && spki_ed25519(&lp.spki, x->ed25519)) {
-                x->leaf_ed25519 = 1;
-                inner_start(x, NULL);          /* from the next certificate */
-                return;
-            }
-            inner_start(x, INNER_NAME(x));
-            (*INNER(x))->start_cert(INNER(x), (uint32_t)x->leaf_len);
-            (*INNER(x))->append(INNER(x), x->leaf, x->leaf_len);
-        }
+        if (x->leaf_ok && x->chain_count && x->leaf_len != x->chain_want[0]) x->leaf_ok = 0;
     }
-    (*INNER(x))->end_cert(INNER(x));
-}
-
-/* the verdict of the full checks (chain, dates, name), 0 when they pass */
-static unsigned full_checks(struct ot_x509 *x)
-{
-    struct OTConnection *c = x->conn;
-    unsigned err;
-    if (x->leaf_ed25519) return ed25519_leaf_check(x);
-    err = (*INNER(x))->end_chain(INNER(x));
-    if (err) return err;
-    if (c->ip_len && CHECKS_NAME(c)
-        && !(x->leaf_ok && ot_cert_has_ip(x->leaf, x->leaf_len, c->ip, (size_t)c->ip_len)))
-        return OT_X509_IP;
-    return 0;
 }
 
 static unsigned xw_end_chain(const br_x509_class **ctx)
@@ -589,19 +906,16 @@ static unsigned xw_end_chain(const br_x509_class **ctx)
     struct ot_x509 *x = (struct ot_x509 *)(void *)ctx;
     struct OTConnection *c = x->conn;
     unsigned err;
-    int leaf_key, pin_ok;
-
-    inner_start(x, INNER_NAME(x));
-    leaf_key = x->have_fingerprint
-        && (x->leaf_ed25519 || br_x509_decoder_get_pkey(&x->leaf_decoder) != NULL);
-    pin_ok = c->pinned && leaf_key && !memcmp(x->fingerprint, c->pin, 32);
+    int pin_ok;
+    leaf_key(x);
+    pin_ok = c->pinned && x->have_fingerprint && x->leaf_key_ok && !memcmp(x->fingerprint, c->pin, 32);
 
     /* OTV_REPORT: the checks OTV_FULL makes, kept for OT_GetVerifyResult();
      * the handshake goes on with the server's key whatever they say */
     if (c->verify == OTV_REPORT) {
-        err = pin_ok ? 0 : full_checks(x);
+        err = pin_ok ? 0 : chain_check(x);
         x->verdict = (int)err;
-        if (!leaf_key) return err ? err : BR_ERR_X509_INVALID_VALUE;
+        if (!x->leaf_key_ok) return err ? err : BR_ERR_X509_INVALID_VALUE;
         x->accepted = 1;
         return 0;
     }
@@ -615,18 +929,18 @@ static unsigned xw_end_chain(const br_x509_class **ctx)
         return OT_X509_PINNED;
     }
     if (c->verify == OTV_NONE) {
-        if (!x->leaf_ed25519) err = (*INNER(x))->end_chain(INNER(x));
-        else err = 0;
-        if (!leaf_key) {
-            x->verdict = (int)(err ? err : BR_ERR_X509_INVALID_VALUE);
+        if (!x->leaf_key_ok) {
+            x->verdict = !x->chain_count ? BR_ERR_X509_EMPTY_CHAIN : BR_ERR_X509_INVALID_VALUE;
             return (unsigned)x->verdict;
         }
         x->accepted = 1;
         x->verdict = 0;
         return 0;
     }
-    err = full_checks(x);
+    err = chain_check(x);
+    if (!err && !x->leaf_key_ok) err = BR_ERR_X509_INVALID_VALUE;
     x->verdict = (int)err;
+    if (!err) x->accepted = 1;
     return err;
 }
 
@@ -637,11 +951,17 @@ static const br_x509_pkey *xw_get_pkey(const br_x509_class *const *ctx, unsigned
         if (usages) *usages = BR_KEYTYPE_SIGN;
         return NULL;            /* the key is x->ed25519 */
     }
-    if (x->accepted) {
-        if (usages) *usages = BR_KEYTYPE_KEYX | BR_KEYTYPE_SIGN;
-        return br_x509_decoder_get_pkey(&x->leaf_decoder);
-    }
-    return (*INNER(x))->get_pkey((const br_x509_class *const *)INNER(x), usages);
+    if (!x->accepted || !x->leaf_key_ok) return NULL;
+    if (usages) *usages = x->leaf_usages;
+    return &x->leaf_key.pk;
+}
+
+int ot_x509_spki(const struct ot_x509 *x, const unsigned char **spki, size_t *len)
+{
+    if (!x->leaf_key_ok || !x->leaf_key.spki) return 0;
+    *spki = x->leaf_key.spki;
+    *len = x->leaf_key.spki_len;
+    return 1;
 }
 
 static const br_x509_class ot_x509_vtable = {
@@ -653,22 +973,12 @@ void ot_x509_init(struct ot_x509 *x, struct OTConnection *conn,
                   const struct ot_impls *m,
                   const br_x509_trust_anchor *ta, size_t ta_count)
 {
-    uint32_t days, seconds;
     x->vtable = &ot_x509_vtable;
     x->conn = conn;
     x->impls = m;
     x->ta = ta;
     x->ta_count = ta_count;
     x->tls13 = 0;
-    br_x509_minimal_init(&x->minimal, m->sha256, ta, ta_count);
-    br_x509_minimal_set_hash(&x->minimal, br_sha1_ID, &br_sha1_vtable);
-    br_x509_minimal_set_hash(&x->minimal, br_sha224_ID, &br_sha224_vtable);
-    br_x509_minimal_set_hash(&x->minimal, br_sha256_ID, m->sha256);
-    br_x509_minimal_set_hash(&x->minimal, br_sha384_ID, m->sha384);
-    br_x509_minimal_set_hash(&x->minimal, br_sha512_ID, m->sha512);
-    br_x509_minimal_set_rsa(&x->minimal, m->rsa_vrfy);
-    br_x509_minimal_set_ecdsa(&x->minimal, m->ec, m->ecdsa_vrfy);
-    if (ot_now(&days, &seconds)) br_x509_minimal_set_time(&x->minimal, days, seconds);
 }
 
 void ot_x509_free(struct ot_x509 *x)
@@ -676,9 +986,6 @@ void ot_x509_free(struct ot_x509 *x)
     ot_free(x->leaf);
     x->leaf = NULL;
     x->leaf_cap = x->leaf_len = 0;
-    ot_free(x->issuer);
-    x->issuer = NULL;
-    x->issuer_cap = x->issuer_len = 0;
     ot_free(x->chain);
     x->chain = NULL;
     x->chain_cap = x->chain_len = 0;
@@ -1062,8 +1369,12 @@ LONG OT_CertInfo(CONST_APTR der, LONG length, struct OTCertInfo *info)
         if (!der_next(&val, &tag, &t) || !cert_time(&t, tag, &info->NotBefore)) return OTERR_BADCERT;
         if (!der_next(&val, &tag, &t) || !cert_time(&t, tag, &info->NotAfter)) return OTERR_BADCERT;
     }
-    key_info(&lp.spki, info);
-    sig_name(&lp.sigalg, info->SignatureAlgorithm, sizeof info->SignatureAlgorithm);
+    {
+        struct der w = lp.spki, spki, alg = lp.sigalg, oid;
+        if (der_next(&w, &tag, &spki)) key_info(&spki, info);
+        if (der_next(&alg, &tag, &oid) && tag == 0x06)
+            sig_name(&oid, info->SignatureAlgorithm, sizeof info->SignatureAlgorithm);
+    }
     info->SelfSigned = lp.subject.len == lp.issuer.len && !memcmp(lp.subject.p, lp.issuer.p, lp.subject.len);
     for (n = 0; alt_name(d, len, n, NULL); ++n) {}
     info->AltNameCount = n;

@@ -16,12 +16,13 @@
 #include "bearssl.h"
 
 #define OT_LIB_VERSION   1
-#define OT_LIB_REVISION  7          /* 1.1: OT_GetPeerName; 1.2: S:GFOpenTLS/ca-bundle.pem, ENVARC:GFOpenTLS/certs/;
+#define OT_LIB_REVISION  8          /* 1.1: OT_GetPeerName; 1.2: S:GFOpenTLS/ca-bundle.pem, ENVARC:GFOpenTLS/certs/;
                                        1.3: TLS 1.3, OT_SetVersion, OT_SessionHasTicket;
                                        1.4: all maths in gfopencrypto.library 2.3, none of BearSSL's;
                                        1.5: OTV_REPORT, the whole chain, certificate fields, group and MAC names;
                                        1.6: TLS 1.2 with ECDHE and AEAD suites by our own client;
-                                       1.7: the key work on the services card (OTACC_SERVICE) */
+                                       1.7: the key work on the services card (OTACC_SERVICE);
+                                       1.8: our own certificate checks, not BearSSL's */
 
 #define OT_HOST_MAX      255
 #define OT_ALPN_MAX      8          /* protocols offered at once */
@@ -97,6 +98,9 @@ struct ot_impls {
 /* the implementations a connection uses: GFOpenCrypto's where it is
  * accelerated (or everywhere, in the host tests), BearSSL's otherwise */
 void ot_glue_select(struct ot_impls *impls, int offload);
+/* RSA-PSS (MGF1 with the same hash) of a hash with a salt of salt bytes: 1 valid (ot_tls13.c) */
+int ot_rsa_pss(const struct ot_impls *m, const br_rsa_public_key *pk, const br_hash_class *h,
+               const unsigned char *hash, size_t salt, const unsigned char *sig, size_t siglen);
 /* Ed25519 (TLS 1.3 certificates): whether there is one, and the check (1 valid) */
 int ot_glue_has_ed25519(void);
 int ot_glue_ed25519(const unsigned char *sig, const unsigned char *pk, const void *msg, size_t len);
@@ -134,8 +138,8 @@ typedef LONG (*ot_svc_transport)(UWORD op, ULONG arg, const ULONG extra[4], stru
  * @return                              1 when it can
  */
 int ot_svc_ready(int keys);
-/* a signature check: 1 good, 0 bad, -1 not done (do it here) */
-int ot_svc_verify(ULONG alg, ULONG digest, const unsigned char *spki, size_t spki_len,
+/* a signature check (salt: RSA-PSS's, 0 the digest's length): 1 good, 0 bad, -1 not done (do it here) */
+int ot_svc_verify(ULONG alg, ULONG digest, ULONG salt, const unsigned char *spki, size_t spki_len,
                   const unsigned char *data, size_t data_len, const unsigned char *sig, size_t sig_len);
 /* a key pair: the public key's length, 0 when not done */
 size_t ot_svc_keygen(ULONG curve, unsigned char *priv, size_t priv_len, unsigned char *pub, size_t pub_room);
@@ -161,28 +165,33 @@ void ot_system_anchors_free(void);
 int ot_trust_init(void);                /* library init: the store's lock */
 
 /* ---- X.509 wrapper (ot_x509.c) ---- */
+/* a public key as the certificate checks use it */
+#define OT_KEY_ED25519 3
+struct ot_key {
+    unsigned type;                   /* BR_KEYTYPE_RSA, BR_KEYTYPE_EC or OT_KEY_ED25519 */
+    br_x509_pkey pk;                 /* RSA and EC */
+    const unsigned char *ed;         /* Ed25519: 32 bytes */
+    const unsigned char *spki;       /* the SubjectPublicKeyInfo (for the card), or NULL */
+    size_t spki_len;
+};
 struct ot_x509 {
     const br_x509_class *vtable;
-    br_x509_minimal_context minimal;
-    br_x509_decoder_context leaf_decoder;
     br_sha256_context leaf_hash;
     struct OTConnection *conn;
     const struct ot_impls *impls;
     const br_x509_trust_anchor *ta;
     size_t ta_count;
     int tls13;                       /* the TLS 1.3 client feeds it: Ed25519 leaves too */
-    int deferred;                    /* the leaf held back until its key type is known */
-    int inner_started;
     int leaf_ed25519;                /* the leaf's key is Ed25519, in ed25519 */
     unsigned char ed25519[32];
-    unsigned char *issuer;           /* the next certificate, kept for an Ed25519 leaf */
-    size_t issuer_len, issuer_cap;
-    int issuer_ok;
     int cert_index;
-    int accepted;                    /* by pin or OTV_NONE: leaf_decoder's key */
+    int accepted;                    /* checked, pinned or OTV_NONE: leaf_key is the server's */
     int leaf_ok;
     unsigned char *leaf;
     size_t leaf_len, leaf_cap;
+    struct ot_key leaf_key;          /* points into leaf or chain */
+    int leaf_key_ok;
+    unsigned leaf_usages;            /* BR_KEYTYPE_KEYX, BR_KEYTYPE_SIGN */
     unsigned char fingerprint[32];
     int have_fingerprint;
     unsigned char *chain;            /* the server's certificates, one after another */
