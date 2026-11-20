@@ -28,8 +28,12 @@
 #define HS_NEW_SESSION_TICKET 4
 #define HS_ENCRYPTED_EXT      8
 #define HS_CERTIFICATE        11
+#define HS_HELLO_REQUEST      0
+#define HS_SERVER_KEY_EXCH    12
 #define HS_CERT_REQUEST       13
+#define HS_SERVER_HELLO_DONE  14
 #define HS_CERT_VERIFY        15
+#define HS_CLIENT_KEY_EXCH    16
 #define HS_FINISHED           20
 #define HS_KEY_UPDATE         24
 #define HS_MESSAGE_HASH       254
@@ -39,6 +43,8 @@
 #define EXT_POINT_FORMATS     11
 #define EXT_SIGALGS           13
 #define EXT_ALPN              16
+#define EXT_EMS               23
+#define EXT_SESSION_TICKET    35
 #define EXT_PSK               41
 #define EXT_VERSIONS          43
 #define EXT_COOKIE            44
@@ -88,6 +94,37 @@ static const uint16_t sigalgs[] = {
 static const uint16_t suites13[] = {
     OT13_CHACHA20_POLY1305_SHA256, OT13_AES_128_GCM_SHA256, OT13_AES_256_GCM_SHA384
 };
+
+/* TLS 1.2 suites our own client runs (DESIGN.md section 15): ECDHE with
+ * AES-GCM or ChaCha20-Poly1305. A server that picks another of BearSSL's
+ * suites goes to BearSSL as before (ot_tls13_bridge.c). The shape is TLS
+ * 1.3's: hash is the PRF's and the transcript's. */
+static const struct ot13_suite suites12[] = {
+    { 0xCCA9, "ECDHE-ECDSA-CHACHA20-POLY1305", 1, 32, &br_sha256_vtable, 32 },
+    { 0xCCA8, "ECDHE-RSA-CHACHA20-POLY1305", 1, 32, &br_sha256_vtable, 32 },
+    { 0xC02B, "ECDHE-ECDSA-AES128-GCM-SHA256", 0, 16, &br_sha256_vtable, 32 },
+    { 0xC02F, "ECDHE-RSA-AES128-GCM-SHA256", 0, 16, &br_sha256_vtable, 32 },
+    { 0xC02C, "ECDHE-ECDSA-AES256-GCM-SHA384", 0, 32, &br_sha384_vtable, 48 },
+    { 0xC030, "ECDHE-RSA-AES256-GCM-SHA384", 0, 32, &br_sha384_vtable, 48 }
+};
+
+static const struct ot13_suite *suite12(unsigned id)
+{
+    size_t i;
+    for (i = 0; i < sizeof suites12 / sizeof suites12[0]; ++i)
+        if (suites12[i].id == id) return &suites12[i];
+    return NULL;
+}
+
+/* ECDSA (else RSA) authenticates the suite */
+static int suite12_ecdsa(unsigned id) { return id == 0xCCA9 || id == 0xC02B || id == 0xC02C; }
+
+static int ot12_off(void) { return ot_tls12_bearssl(); }
+
+struct OTConnection;
+static LONG t12_server_hello(struct OTConnection *c, const unsigned char *msg, size_t mlen);
+struct rd;
+static LONG t12_message(struct OTConnection *c, const unsigned char *msg, size_t len, struct rd *r, int last);
 
 /* ---- small helpers ---- */
 
@@ -179,7 +216,8 @@ static LONG abort13(struct OTConnection *c, int alert, LONG code, const char *wh
         tx_flush(c);
     }
     if (code == OTERR_PROTOCOL)
-        return ot_fail(c, code, alert, "The server broke the TLS 1.3 protocol: ", what, ".");
+        return ot_fail(c, code, alert, t && t->v12 ? "The server broke the TLS 1.2 protocol: "
+                                                   : "The server broke the TLS 1.3 protocol: ", what, ".");
     return ot_fail(c, code, alert, what, NULL, NULL);
 }
 
@@ -203,7 +241,7 @@ static LONG tx_flush(struct OTConnection *c)
 static unsigned char *tx_room(struct ot13 *t, size_t len)
 {
     if (t->tx_sent == t->tx_len) t->tx_len = t->tx_sent = 0;
-    if (t->tx_len + 5 + len + 1 + 16 > t->tx_cap) return NULL;
+    if (t->tx_len + 5 + len + 8 + 16 > t->tx_cap) return NULL;    /* TLS 1.2's explicit nonce, or 1.3's type */
     return t->tx + t->tx_len;
 }
 
@@ -212,7 +250,7 @@ static unsigned char *tx_room(struct ot13 *t, size_t len)
 static void tx_record(struct ot13 *t, unsigned char *rec, int type, size_t len)
 {
     if (t->wr_on) {
-        t->tx_len += ot13_seal(&t->wr, rec, type, len);
+        t->tx_len += t->v12 ? ot12_seal(&t->wr, rec, type, len) : ot13_seal(&t->wr, rec, type, len);
     } else {
         rec[0] = (unsigned char)type;
         rec[1] = 3;
@@ -283,6 +321,31 @@ static LONG make_p256(struct OTConnection *c, unsigned char *pub)
     return OTERR_OK;
 }
 
+/* a key share on curve (P-384 or P-521, TLS 1.2): the private half in
+ * t->ecpriv, the point in pub; its length, or 0 */
+static size_t make_ec(struct OTConnection *c, int curve, unsigned char *pub)
+{
+    struct ot13 *t = c->t13;
+    const unsigned char *order;
+    size_t olen, i;
+    order = c->impls.ec->order(curve, &olen);
+    if (olen > sizeof t->ecpriv) return 0;
+    do {
+        int below = 0, zero = 1;
+        unsigned char top = order[0];
+        if (ot_random(t->ecpriv, olen) != OTERR_OK) return 0;
+        while (top & (top + 1)) top |= (unsigned char)(top >> 1);   /* the order's top bits */
+        t->ecpriv[0] &= top;
+        for (i = 0; i < olen; ++i) {
+            if (t->ecpriv[i]) zero = 0;
+            if (t->ecpriv[i] != order[i]) { below = t->ecpriv[i] < order[i]; break; }
+        }
+        if (below && !zero) break;
+    } while (1);
+    t->ecpriv_len = olen;
+    return c->impls.ec->mulgen(pub, t->ecpriv, olen, curve);
+}
+
 /* the shared secret with the server's share; its length, 0 if refused */
 static size_t ecdhe(struct OTConnection *c, unsigned group, const unsigned char *share, size_t len,
                     unsigned char *out)
@@ -298,6 +361,18 @@ static size_t ecdhe(struct OTConnection *c, unsigned group, const unsigned char 
         if (!acc) return 0;             /* a small-order point */
         memcpy(out, g, 32);
         return 32;
+    }
+    if (group == GROUP_P384 || group == GROUP_P521) {
+        unsigned char gg[133];
+        int curve = group == GROUP_P384 ? BR_EC_secp384r1 : BR_EC_secp521r1;
+        size_t plen = group == GROUP_P384 ? 97 : 133;
+        if (len != plen || share[0] != 4 || !t->ecpriv_len) return 0;
+        memcpy(gg, share, plen);
+        if (!c->impls.ec->mul(gg, plen, t->ecpriv, t->ecpriv_len, curve)) return 0;
+        xoff = c->impls.ec->xoff(curve, &xlen);
+        memcpy(out, gg + xoff, xlen);
+        memset(gg, 0, sizeof gg);
+        return xlen;
     }
     if (len != 65 || share[0] != 4) return 0;
     memcpy(g, share, 65);
@@ -588,6 +663,35 @@ static LONG open_record(struct OTConnection *c)
     size_t len = get16(t->rx + 3);
     int type = t->rx[0];
     t->rx_have = 0;           /* the next read starts a new record */
+    if (t->v12) {
+        if (type == BR_SSL_CHANGE_CIPHER_SPEC) {
+            if (len != 1 || t->rx[5] != 1 || t->st != T12_WAIT_CCS || t->hs_len)
+                return abort13(c, ALERT_UNEXPECTED_MESSAGE, OTERR_PROTOCOL, "an unexpected ChangeCipherSpec");
+            t->rd_on = 1;                      /* the keys were made with the master secret */
+            t->st = T12_WAIT_FIN;
+            t->pt_len = 0;
+            t->pt_type = type;
+            return OTERR_OK;
+        }
+        if (type != BR_SSL_HANDSHAKE && type != BR_SSL_ALERT && type != BR_SSL_APPLICATION_DATA)
+            return abort13(c, ALERT_UNEXPECTED_MESSAGE, OTERR_PROTOCOL, "an unexpected record");
+        if (t->rd_on) {
+            int err = ot12_open(&t->rd, t->rx, 5 + len, &len);
+            if (err == BR_ERR_BAD_MAC)
+                return abort13(c, ALERT_BAD_RECORD_MAC, OTERR_PROTOCOL, "a record does not decrypt");
+            if (err)
+                return abort13(c, err == BR_ERR_TOO_LARGE ? ALERT_RECORD_OVERFLOW : ALERT_DECODE_ERROR,
+                               OTERR_PROTOCOL, "a malformed record");
+        }
+        t->pt = t->rx + 5;
+        t->pt_len = len;
+        t->pt_type = type;
+        if (type == BR_SSL_APPLICATION_DATA && t->st != T13_OPEN)
+            return abort13(c, ALERT_UNEXPECTED_MESSAGE, OTERR_PROTOCOL, "application data before Finished");
+        if (type != BR_SSL_HANDSHAKE && t->hs_len)
+            return abort13(c, ALERT_UNEXPECTED_MESSAGE, OTERR_PROTOCOL, "a handshake message cut short");
+        return OTERR_OK;
+    }
     if (type == BR_SSL_APPLICATION_DATA && t->rd_on) {
         int err = ot13_open(&t->rd, t->rx, 5 + len, &type, &len);
         if (err == BR_ERR_BAD_MAC)
@@ -829,6 +933,8 @@ static LONG server_hello(struct OTConnection *c, const unsigned char *msg, size_
         if (!memcmp(random + 24, "DOWNGRD", 7) && (random[31] == 0 || random[31] == 1))
             return abort13(c, ALERT_ILLEGAL_PARAMETER, OTERR_VERSION,
                            "The connection was pushed down from TLS 1.3 (an attack, or a broken middlebox).");
+        if (get16(msg + 4) == OT_TLS12 && suite12(suite) && !ot12_off())
+            return t12_server_hello(c, msg, mlen);
         t->st = T13_BRIDGE;
         return ot13_bridge_start(c, msg, mlen, rest, rest_len);
     }
@@ -1179,6 +1285,358 @@ static LONG key_update(struct OTConnection *c, struct rd *r, int last)
     return OTERR_OK;
 }
 
+/* ---- TLS 1.2, our own (RFC 5246, 4492/8422, 5288, 7905, 5746) ---- */
+
+static LONG t12_alpn(struct OTConnection *c, struct rd *d)
+{
+    struct rd l = rdsub(d, rd16(d));
+    size_t n = rd8(&l);
+    const unsigned char *name = l.p;
+    rdsub(&l, n);
+    if (l.bad || l.n || !n || !c->alpn_count) return -1;
+    if (!offered_alpn(c, name, n))
+        return abort13(c, ALERT_ILLEGAL_PARAMETER, OTERR_PROTOCOL, "an application protocol it was not offered");
+    if (n >= sizeof c->alpn_selected) n = sizeof c->alpn_selected - 1;
+    memcpy(c->alpn_selected, name, n);
+    c->alpn_selected[n] = 0;
+    return OTERR_OK;
+}
+
+/* the connection's keys from the master secret (section 6.3) */
+static LONG t12_keys(struct OTConnection *c)
+{
+    struct ot13 *t = c->t13;
+    const struct ot13_suite *s = t->suite;
+    unsigned char seed[64], kb[2 * 32 + 2 * 12];
+    size_t kl = s->key_len, il = s->chacha ? 12 : 4;
+    int bad;
+    memcpy(seed, t->srandom, 32);
+    memcpy(seed + 32, t->random, 32);
+    ot12_prf(s->hash, t->master12, 48, "key expansion", seed, 64, kb, 2 * kl + 2 * il);
+    bad = ot12_keys_set(&t->wr, s, &c->impls, kb, kb + 2 * kl)
+       || ot12_keys_set(&t->rd, s, &c->impls, kb + kl, kb + 2 * kl + il);
+    memset(kb, 0, sizeof kb);
+    if (bad) return abort13(c, ALERT_INTERNAL_ERROR, OTERR_INTERNAL, "The AES table does not fit.");
+    return OTERR_OK;
+}
+
+/* a ServerHello for TLS 1.2 with one of suites12 */
+static LONG t12_server_hello(struct OTConnection *c, const unsigned char *msg, size_t mlen)
+{
+    struct ot13 *t = c->t13;
+    br_ssl_session_parameters *sp = &c->cc.eng.session;
+    struct rd r, ex;
+    const unsigned char *sid;
+    size_t sid_len;
+    unsigned suite, seen = 0;
+    LONG rc;
+    r.p = msg + 4; r.n = mlen - 4; r.bad = 0;
+    rd16(&r);
+    if (r.n >= 32) memcpy(t->srandom, r.p, 32);
+    rdsub(&r, 32);
+    sid_len = rd8(&r);
+    sid = r.p;
+    rdsub(&r, sid_len);
+    suite = rd16(&r);
+    if (rd8(&r) != 0) r.bad = 1;
+    if (!r.bad && r.n) {
+        ex = rdsub(&r, rd16(&r));
+        while (ex.n && !ex.bad) {
+            unsigned type = rd16(&ex);
+            struct rd d = rdsub(&ex, rd16(&ex));
+            unsigned bit = type == EXT_RENEGOTIATION ? 1 : type == EXT_SERVER_NAME ? 2
+                         : type == EXT_POINT_FORMATS ? 4 : type == EXT_ALPN ? 8 : 0;
+            if (!bit) return abort13(c, ALERT_UNSUPPORTED_EXT, OTERR_PROTOCOL, "an extension it was not offered");
+            if (seen & bit) return abort13(c, ALERT_ILLEGAL_PARAMETER, OTERR_PROTOCOL, "an extension twice");
+            seen |= bit;
+            if (type == EXT_RENEGOTIATION) {
+                /* RFC 5746: empty on the first handshake; we never renegotiate */
+                if (rd8(&d) != 0)
+                    return abort13(c, ALERT_HANDSHAKE_FAILURE, OTERR_PROTOCOL, "renegotiation data on a new connection");
+            } else if (type == EXT_SERVER_NAME) {
+                if (d.n || c->ip_len) d.bad = 1;
+            } else if (type == EXT_POINT_FORMATS) {
+                struct rd l = rdsub(&d, rd8(&d));
+                int uncompressed = 0;
+                while (l.n && !l.bad) if (rd8(&l) == 0) uncompressed = 1;
+                if (!uncompressed)
+                    return abort13(c, ALERT_ILLEGAL_PARAMETER, OTERR_PROTOCOL, "no uncompressed points");
+            } else {
+                rc = t12_alpn(c, &d);
+                if (rc == -1) d.bad = 1;
+                else if (rc != OTERR_OK) return rc;
+            }
+            if (d.bad || d.n) ex.bad = 1;
+        }
+        if (ex.bad) r.bad = 1;
+    }
+    if (r.bad || r.n || sid_len > 32)
+        return abort13(c, ALERT_DECODE_ERROR, OTERR_PROTOCOL, "a malformed ServerHello");
+    t->v12 = 1;
+    t->suite = suite12(suite);
+    t->hash = t->suite->hash;
+    th_update(t, msg, mlen);
+    if (sid_len && sp->session_id_len == sid_len && !memcmp(sid, sp->session_id, sid_len)) {
+        /* the session offered is resumed (section 7.3, the abbreviated handshake) */
+        if (sp->version != OT_TLS12 || sp->cipher_suite != suite)
+            return abort13(c, ALERT_ILLEGAL_PARAMETER, OTERR_PROTOCOL, "a session resumed with other parameters");
+        memcpy(t->master12, sp->master_secret, 48);
+        t->resumed12 = 1;
+        t->psk_used = 1;
+        if ((rc = t12_keys(c)) != OTERR_OK) return rc;
+        t->st = T12_WAIT_CCS;
+        return OTERR_OK;
+    }
+    /* a new session, kept for OT_GetSession once the master secret is known */
+    memset(sp, 0, sizeof *sp);
+    sp->session_id_len = (unsigned char)sid_len;
+    memcpy(sp->session_id, sid, sid_len);
+    t->st = T12_WAIT_CERT;
+    return OTERR_OK;
+}
+
+static LONG t12_certificate(struct OTConnection *c, struct rd *r)
+{
+    struct ot13 *t = c->t13;
+    const br_x509_class **xc = &c->x509.vtable;
+    const br_x509_pkey *pk;
+    struct rd list = rdsub(r, rd24(r));
+    unsigned err, usages = 0;
+    int count = 0;
+    if (r->bad || r->n) return abort13(c, ALERT_DECODE_ERROR, OTERR_PROTOCOL, "a malformed Certificate");
+    c->x509.tls13 = 0;
+    (*xc)->start_chain(xc, c->host);
+    while (list.n && !list.bad) {
+        size_t len = rd24(&list);
+        struct rd der = rdsub(&list, len);
+        if (list.bad || !len) break;
+        (*xc)->start_cert(xc, (uint32_t)len);
+        (*xc)->append(xc, der.p, len);
+        (*xc)->end_cert(xc);
+        ++count;
+    }
+    if (list.bad || !count)
+        return abort13(c, ALERT_DECODE_ERROR, OTERR_PROTOCOL, count ? "a malformed Certificate" : "no certificate");
+    err = (*xc)->end_chain(xc);
+    if (err) return cert_failed(c, (int)err);
+    pk = (*xc)->get_pkey(xc, &usages);
+    if (!pk) return cert_failed(c, BR_ERR_X509_UNSUPPORTED);
+    if (!(usages & BR_KEYTYPE_SIGN)) return cert_failed(c, BR_ERR_WRONG_KEY_USAGE);
+    if (pk->key_type != (suite12_ecdsa(t->suite->id) ? BR_KEYTYPE_EC : BR_KEYTYPE_RSA))
+        return cert_failed(c, BR_ERR_WRONG_KEY_USAGE);
+    t->have_cert = 1;
+    t->st = T12_WAIT_SKE;
+    return OTERR_OK;
+}
+
+/* the ServerKeyExchange: the server's ECDHE share, signed (RFC 8422 section 5.4) */
+static LONG t12_server_key_exchange(struct OTConnection *c, struct rd *r)
+{
+    struct ot13 *t = c->t13;
+    const br_x509_class **xc = &c->x509.vtable;
+    const br_x509_pkey *pk = (*xc)->get_pkey(xc, NULL);
+    const unsigned char *params = r->p, *point, *sig;
+    const br_hash_class *hc;
+    const unsigned char *oid;
+    br_hash_compat_context hctx;
+    unsigned char h[64], hout[64], shared[66], pms[66];
+    unsigned group, scheme;
+    size_t plen, params_len, siglen, hl, i, slen;
+    int ok = 0, offered = 0;
+    LONG rc;
+    if (rd8(r) != 3)
+        return abort13(c, ALERT_ILLEGAL_PARAMETER, OTERR_CIPHER, "a key exchange that is not a named curve");
+    group = rd16(r);
+    plen = rd8(r);
+    point = r->p;
+    rdsub(r, plen);
+    params_len = (size_t)(r->p - params);
+    scheme = rd16(r);
+    siglen = rd16(r);
+    sig = r->p;
+    rdsub(r, siglen);
+    if (r->bad || r->n) return abort13(c, ALERT_DECODE_ERROR, OTERR_PROTOCOL, "a malformed ServerKeyExchange");
+    if (group != GROUP_X25519 && group != GROUP_P256 && group != GROUP_P384 && group != GROUP_P521)
+        return abort13(c, ALERT_ILLEGAL_PARAMETER, OTERR_CIPHER, "a curve GFOpenTLS did not offer");
+    for (i = 0; i < sizeof sigalgs / sizeof sigalgs[0]; ++i)
+        if (sigalgs[i] == scheme && scheme != 0x0807) offered = 1;
+    if (!offered || !pk)
+        return abort13(c, ALERT_ILLEGAL_PARAMETER, OTERR_CIPHER, "The server signed with a scheme GFOpenTLS did not offer.");
+    switch (scheme >> 8) {
+    case 2: hc = &br_sha1_vtable; oid = BR_HASH_OID_SHA1; break;
+    case 4: hc = &br_sha256_vtable; oid = BR_HASH_OID_SHA256; break;
+    case 5: hc = &br_sha384_vtable; oid = BR_HASH_OID_SHA384; break;
+    case 6: hc = &br_sha512_vtable; oid = BR_HASH_OID_SHA512; break;
+    case 8:
+        hc = scheme == 0x0804 ? &br_sha256_vtable : scheme == 0x0805 ? &br_sha384_vtable : &br_sha512_vtable;
+        oid = NULL;
+        break;
+    default:
+        return abort13(c, ALERT_ILLEGAL_PARAMETER, OTERR_CIPHER, "The server signed with a scheme GFOpenTLS did not offer.");
+    }
+    hl = hlen_of(hc);
+    hc->init(&hctx.vtable);
+    hc->update(&hctx.vtable, t->random, 32);
+    hc->update(&hctx.vtable, t->srandom, 32);
+    hc->update(&hctx.vtable, params, params_len);
+    hc->out(&hctx.vtable, h);
+    if ((scheme >> 8) == 8) {                         /* RSA-PSS with an rsaEncryption key */
+        if (pk->key_type == BR_KEYTYPE_RSA) ok = ot13_rsa_pss(&c->impls, &pk->key.rsa, hc, h, sig, siglen);
+    } else if ((scheme & 0xFF) == 1) {                /* RSA PKCS #1 v1.5 */
+        if (pk->key_type == BR_KEYTYPE_RSA)
+            ok = c->impls.rsa_vrfy(sig, siglen, oid, hl, &pk->key.rsa, hout) && ct_equal(hout, h, hl);
+    } else if ((scheme & 0xFF) == 3) {                /* ECDSA */
+        if (pk->key_type == BR_KEYTYPE_EC)
+            ok = c->impls.ecdsa_vrfy(c->impls.ec, h, hl, &pk->key.ec, sig, siglen) ? 1 : 0;
+    }
+    if (!ok) {
+        queue_alert(c, 2, ALERT_DECRYPT_ERROR);
+        tx_flush(c);
+        return ot_engine_error(c, BR_ERR_BAD_SIGNATURE);
+    }
+    /* our share and the premaster secret */
+    t->group = group;
+    if (group == GROUP_X25519) {
+        rc = make_x25519(c, t->kx_pub);
+        t->kx_len = 32;
+    } else if (group == GROUP_P256) {
+        rc = make_p256(c, t->kx_pub);
+        t->kx_len = 65;
+    } else {
+        t->kx_len = make_ec(c, group == GROUP_P384 ? BR_EC_secp384r1 : BR_EC_secp521r1, t->kx_pub);
+        rc = t->kx_len ? OTERR_OK : OTERR_RANDOM;
+    }
+    if (rc != OTERR_OK) return abort13(c, ALERT_INTERNAL_ERROR, rc, "No key share could be made.");
+    slen = ecdhe(c, group, point, plen, shared);
+    memset(t->x25519, 0, sizeof t->x25519);
+    memset(t->p256, 0, sizeof t->p256);
+    memset(t->ecpriv, 0, sizeof t->ecpriv);
+    if (!slen) return abort13(c, ALERT_ILLEGAL_PARAMETER, OTERR_PROTOCOL, "a bad key share");
+    {
+        unsigned char seed[64];
+        memcpy(pms, shared, slen);
+        memcpy(seed, t->random, 32);
+        memcpy(seed + 32, t->srandom, 32);
+        ot12_prf(t->hash, pms, slen, "master secret", seed, 64, t->master12, 48);
+    }
+    memset(shared, 0, sizeof shared);
+    memset(pms, 0, sizeof pms);
+    t->st = T12_WAIT_SHD;
+    return OTERR_OK;
+}
+
+static LONG t12_cert_request(struct OTConnection *c, struct rd *r)
+{
+    rdsub(r, rd8(r));                                  /* certificate types */
+    rdsub(r, rd16(r));                                 /* signature algorithms */
+    rdsub(r, rd16(r));                                 /* authorities: we answer with no certificate */
+    if (r->bad || r->n) return abort13(c, ALERT_DECODE_ERROR, OTERR_PROTOCOL, "a malformed CertificateRequest");
+    c->t13->cert_req = 1;
+    return OTERR_OK;
+}
+
+/* a handshake message of ours, into the transcript and out */
+static LONG t12_send(struct OTConnection *c, int type, const unsigned char *body, size_t len)
+{
+    struct ot13 *t = c->t13;
+    unsigned char *rec = tx_room(t, 4 + len);
+    if (!rec) return abort13(c, ALERT_INTERNAL_ERROR, OTERR_INTERNAL, "No room for a handshake message.");
+    rec[5] = (unsigned char)type;
+    put24(rec + 6, len);
+    if (len) memcpy(rec + 9, body, len);
+    th_update(t, rec + 5, 4 + len);
+    tx_record(t, rec, BR_SSL_HANDSHAKE, 4 + len);
+    return OTERR_OK;
+}
+
+/* ChangeCipherSpec and Finished from us (section 7.4.9) */
+static LONG t12_client_finished(struct OTConnection *c)
+{
+    struct ot13 *t = c->t13;
+    unsigned char th[OT13_HASH_MAX], vd[12];
+    LONG rc;
+    queue_ccs(t);
+    t->wr_on = 1;
+    th_out(t, t->hash, th);
+    ot12_prf(t->hash, t->master12, 48, "client finished", th, t->suite->hash_len, vd, 12);
+    rc = t12_send(c, HS_FINISHED, vd, 12);
+    return rc;
+}
+
+static LONG t12_server_hello_done(struct OTConnection *c, struct rd *r, int last)
+{
+    struct ot13 *t = c->t13;
+    br_ssl_session_parameters *sp = &c->cc.eng.session;
+    unsigned char cke[1 + 133];
+    LONG rc;
+    if (r->n) return abort13(c, ALERT_DECODE_ERROR, OTERR_PROTOCOL, "a malformed ServerHelloDone");
+    if (!last) return abort13(c, ALERT_UNEXPECTED_MESSAGE, OTERR_PROTOCOL, "data after ServerHelloDone");
+    if (t->cert_req) {                                 /* no certificate of ours */
+        static const unsigned char none[3] = { 0, 0, 0 };
+        if ((rc = t12_send(c, HS_CERTIFICATE, none, 3)) != OTERR_OK) return rc;
+    }
+    cke[0] = (unsigned char)t->kx_len;
+    memcpy(cke + 1, t->kx_pub, t->kx_len);
+    if ((rc = t12_send(c, HS_CLIENT_KEY_EXCH, cke, 1 + t->kx_len)) != OTERR_OK) return rc;
+    if ((rc = t12_keys(c)) != OTERR_OK) return rc;
+    if ((rc = t12_client_finished(c)) != OTERR_OK) return rc;
+    sp->version = OT_TLS12;
+    sp->cipher_suite = t->suite->id;
+    memcpy(sp->master_secret, t->master12, 48);
+    t->st = T12_WAIT_CCS;
+    return OTERR_OK;
+}
+
+static LONG t12_finished(struct OTConnection *c, struct rd *r, const unsigned char *msg, size_t len, int last)
+{
+    struct ot13 *t = c->t13;
+    unsigned char th[OT13_HASH_MAX], want[12];
+    LONG rc;
+    if (r->n != 12) return abort13(c, ALERT_DECODE_ERROR, OTERR_PROTOCOL, "a malformed Finished");
+    if (!last) return abort13(c, ALERT_UNEXPECTED_MESSAGE, OTERR_PROTOCOL, "data after Finished");
+    th_out(t, t->hash, th);
+    ot12_prf(t->hash, t->master12, 48, "server finished", th, t->suite->hash_len, want, 12);
+    if (!ct_equal(want, r->p, 12)) {
+        queue_alert(c, 2, ALERT_DECRYPT_ERROR);
+        tx_flush(c);
+        return ot_fail(c, OTERR_PROTOCOL, BR_ERR_BAD_FINISHED,
+                       "The server's Finished message does not verify.", NULL, NULL);
+    }
+    th_update(t, msg, len);
+    if (t->resumed12 && (rc = t12_client_finished(c)) != OTERR_OK) return rc;
+    memset(t->master12, 0, sizeof t->master12);
+    t->st = T13_OPEN;
+    return OTERR_OK;
+}
+
+static LONG t12_message(struct OTConnection *c, const unsigned char *msg, size_t len, struct rd *r, int last)
+{
+    struct ot13 *t = c->t13;
+    unsigned type = msg[0];
+    if (type == HS_HELLO_REQUEST && len == 4) return OTERR_OK;   /* no renegotiation: ignored */
+    switch (t->st) {
+    case T12_WAIT_CERT:
+        if (type != HS_CERTIFICATE) break;
+        th_update(t, msg, len);
+        return t12_certificate(c, r);
+    case T12_WAIT_SKE:
+        if (type != HS_SERVER_KEY_EXCH) break;
+        th_update(t, msg, len);
+        return t12_server_key_exchange(c, r);
+    case T12_WAIT_SHD:
+        th_update(t, msg, len);
+        if (type == HS_CERT_REQUEST && !t->cert_req) return t12_cert_request(c, r);
+        if (type == HS_SERVER_HELLO_DONE) return t12_server_hello_done(c, r, last);
+        break;
+    case T12_WAIT_FIN:
+        if (type != HS_FINISHED) break;
+        return t12_finished(c, r, msg, len, last);
+    default:
+        break;
+    }
+    return abort13(c, ALERT_UNEXPECTED_MESSAGE, OTERR_PROTOCOL, "a message out of order");
+}
+
 /* one whole handshake message; last says it ends its record */
 static LONG handshake_message(struct OTConnection *c, const unsigned char *msg, size_t len, int last)
 {
@@ -1188,6 +1646,7 @@ static LONG handshake_message(struct OTConnection *c, const unsigned char *msg, 
     unsigned char th[OT13_HASH_MAX];
     LONG rc;
     r.p = msg + 4; r.n = len - 4; r.bad = 0;
+    if (t->v12) return t12_message(c, msg, len, &r, last);
     if (t->st == T13_OPEN) {
         if (type == HS_NEW_SESSION_TICKET) return new_session_ticket(c, &r);
         if (type == HS_KEY_UPDATE) return key_update(c, &r, last);
@@ -1246,7 +1705,7 @@ static LONG handshake_bytes(struct OTConnection *c)
                 if (p[0] != HS_SERVER_HELLO)
                     return abort13(c, ALERT_UNEXPECTED_MESSAGE, OTERR_PROTOCOL, "no ServerHello");
                 rc = server_hello(c, p, need, t->pt, t->pt_len);
-                t->pt_len = 0;
+                if (!t->v12) t->pt_len = 0;    /* TLS 1.2 ours: the server's next messages follow */
             } else {
                 rc = handshake_message(c, p, need, t->pt_len == 0);
             }
@@ -1277,7 +1736,7 @@ static LONG handshake_bytes(struct OTConnection *c)
                 if (t->hs[0] != HS_SERVER_HELLO)
                     return abort13(c, ALERT_UNEXPECTED_MESSAGE, OTERR_PROTOCOL, "no ServerHello");
                 rc = server_hello(c, t->hs, need, t->pt, t->pt_len);
-                t->pt_len = 0;
+                if (!t->v12) t->pt_len = 0;
             } else {
                 rc = handshake_message(c, t->hs, need, t->pt_len == 0);
             }
@@ -1339,11 +1798,13 @@ LONG ot13_read(struct OTConnection *c, unsigned char *buf, LONG len)
             return (LONG)n;
         }
         if (c->state == OTS_CLOSED) return c->clean_close ? 0 : OTERR_STATE;
-        /* a KeyUpdate's answer waiting: send it if the socket takes it now */
+        /* records still going out (the rest of a write the socket refused,
+         * a KeyUpdate's answer): they go first, since the server may be
+         * waiting for them before it answers */
         if (t->tx_sent < t->tx_len) {
             rc = tx_flush(c);
-            if (rc == OTERR_WOULDBLOCK) { c->state = OTS_OPEN; c->error = OTERR_OK; }
-            else if (rc != OTERR_OK) return rc;
+            if (rc == OTERR_WOULDBLOCK) { c->state = OTS_OPEN; return rc; }
+            if (rc != OTERR_OK) return rc;
         }
         rc = one_record(c);
         if (rc == OTERR_CLOSED && c->clean_close) return 0;
@@ -1365,7 +1826,7 @@ LONG ot13_write(struct OTConnection *c, const unsigned char *buf, LONG len)
         size_t n = (size_t)(len - total), room;
         unsigned char *rec;
         /* new keys long before AES-GCM's limit (RFC 8446 section 5.5) */
-        if (t->wr.seq >= t->update_after) {
+        if (!t->v12 && t->wr.seq >= t->update_after) {
             rec = tx_room(t, 5);
             if (rec) {
                 rec[5] = HS_KEY_UPDATE;
@@ -1378,7 +1839,7 @@ LONG ot13_write(struct OTConnection *c, const unsigned char *buf, LONG len)
             }
         }
         room = t->tx_cap - t->tx_len;
-        room = room > 5 + 17 + OT13_TX_SPARE ? room - 5 - 17 - OT13_TX_SPARE : 0;
+        room = room > 5 + 24 + OT13_TX_SPARE ? room - 5 - 24 - OT13_TX_SPARE : 0;
         if (room > OT13_RECORD_MAX) room = OT13_RECORD_MAX;
         if (n > room) n = room;
         if (n) {

@@ -473,3 +473,52 @@ GnuTLS. Revision 5 adds it to GFOpenTLS, client side only.
   Ed25519, P-256/P-384 and RSA key exchange, and a resumed connection.
 - **Size.** gfopentls.library 120,816 bytes to 130,916 (GCC 16, 68040).
 
+
+## 15. GFOpenTLS 2.0: no BearSSL (plan, 20 November 2026)
+
+Dale, 20 November 2026: GFOpenTLS is ours, so TLS 1.2 is ours too: TLS 1.3 by
+default, the version chosen per connection, and the work handed to the
+services card where there is one.
+
+What BearSSL still does in 1.5: the TLS 1.2 handshake and records (from the
+bridge, section 10), TLS 1.0 and 1.1, the X.509 chain (the minimal engine,
+wrapped by `ot_x509.c`), the trust anchors' form, and the function tables
+GFOpenCrypto is plugged into. Every hash, cipher and public-key operation is
+already GFOpenCrypto's (section 12).
+
+- **Versions.** Unchanged API: `MinVersion` 0 is TLS 1.2, `MaxVersion` 0 is
+  TLS 1.3, `OT_SetVersion()` sets one connection's range, so a program can
+  ask for TLS 1.3 only or TLS 1.2 only. TLS 1.0 and 1.1 (RFC 8996) are not
+  carried into 2.0: a range below TLS 1.2 is raised to it.
+- **TLS 1.2, ours** (`ot_tls12.c`, from RFC 5246, 5288, 7905, 7627, 8422
+  and 5746). It takes over where the bridge hands to BearSSL today: the
+  same ClientHello, so still no second connect. ECDHE with X25519, P-256
+  and P-384; ECDSA, RSA PKCS #1 and RSA-PSS ServerKeyExchange signatures;
+  AES-128/256-GCM and ChaCha20-Poly1305, then AES-CBC with HMAC-SHA1,
+  SHA-256 and SHA-384 for older servers; RSA key transport last.
+  Extended master secret, renegotiation_info (no renegotiation),
+  resumption by session ID and by ticket. The record layer, the PRF and
+  the AEADs over the same GFOpenCrypto calls as TLS 1.3.
+- **X.509, ours** (`ot_x509.c` grown into the whole check, RFC 5280): the
+  chain built from what the server sent to an anchor, each signature
+  (RSA PKCS #1, RSA-PSS, ECDSA, Ed25519), dates, basicConstraints and
+  pathLen, keyUsage and extendedKeyUsage, names and addresses as now.
+  Anchors kept as our own structure, read from the same PEM bundle.
+- **The services card first.** A magic function runs on the emulator's own
+  core, inline in the JIT, so the whole Amiga waits while it works. The
+  services card (or AkikoPlus) runs a request on its worker threads, on
+  the host's other cores, while the 68k goes on with other tasks; the
+  calling task waits on its signal and the JIT carries on at host speed.
+  So where the card offers `opentls.key/1`, every public-key operation
+  goes there (key shares, ECDHE, signature checks, the chain's
+  signatures), and the bulk AEAD of a full 16 KB record too, when that is
+  quicker than the round trip (measured, not assumed). Magic functions
+  stay the fall-back on AmiCradle without the card, and our 68k code on
+  a real Amiga without one. `opentls.key/1` grows the operations TLS 1.2
+  and the record layer need. A later service can take a whole connection
+  to the host's OpenSSL 3.
+- **Order.** 1. TLS 1.2 handshake and records, BearSSL still checking the
+  chain; tested against the same OpenSSL servers as now. 2. The services
+  card path for the key operations, measured against the magic functions.
+  3. X.509 and the anchors. 4. BearSSL and its tables out of the build,
+  the version range raised, `OT_LIB_VERSION` 2.

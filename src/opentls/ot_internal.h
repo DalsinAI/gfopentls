@@ -16,10 +16,11 @@
 #include "bearssl.h"
 
 #define OT_LIB_VERSION   1
-#define OT_LIB_REVISION  5          /* 1.1: OT_GetPeerName; 1.2: S:GFOpenTLS/ca-bundle.pem, ENVARC:GFOpenTLS/certs/;
+#define OT_LIB_REVISION  6          /* 1.1: OT_GetPeerName; 1.2: S:GFOpenTLS/ca-bundle.pem, ENVARC:GFOpenTLS/certs/;
                                        1.3: TLS 1.3, OT_SetVersion, OT_SessionHasTicket;
                                        1.4: all maths in gfopencrypto.library 2.3, none of BearSSL's;
-                                       1.5: OTV_REPORT, the whole chain, certificate fields, group and MAC names */
+                                       1.5: OTV_REPORT, the whole chain, certificate fields, group and MAC names;
+                                       1.6: TLS 1.2 with ECDHE and AEAD suites by our own client */
 
 #define OT_HOST_MAX      255
 #define OT_ALPN_MAX      8          /* protocols offered at once */
@@ -55,6 +56,8 @@ void ot_local_to_utc(uint32_t days, uint32_t seconds, long west,
  * it small) */
 #define OT_KEY_UPDATE_AFTER (1UL << 23)
 uint32_t ot_key_update_after(void);
+/* TLS 1.2 by BearSSL instead of our own client (the host tests compare them) */
+int ot_tls12_bearssl(void);
 LONG ot_sock_read(LONG fd, struct Library *socketbase, void *buf, LONG len);
 LONG ot_sock_write(LONG fd, struct Library *socketbase, const void *buf, LONG len);
 LONG ot_hook_call(struct Hook *hook, void *object, struct OTIOMessage *msg);

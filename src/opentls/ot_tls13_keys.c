@@ -229,3 +229,120 @@ int ot13_open(struct ot13_keys *k, unsigned char *rec, size_t reclen, int *type,
     *len = clen;
     return 0;
 }
+
+/* ---- TLS 1.2 ---- */
+
+void ot12_prf(const br_hash_class *h, const unsigned char *secret, size_t slen, const char *label,
+              const unsigned char *seed, size_t seed_len, unsigned char *out, size_t out_len)
+{
+    br_hmac_key_context kc;
+    br_hmac_context hc;
+    unsigned char a[OT13_HASH_MAX], block[OT13_HASH_MAX];
+    size_t hl = hash_len(h), llen = strlen(label), take;
+    br_hmac_key_init(&kc, h, secret, slen);
+    /* A(1) = HMAC(secret, label + seed) */
+    br_hmac_init(&hc, &kc, 0);
+    br_hmac_update(&hc, label, llen);
+    br_hmac_update(&hc, seed, seed_len);
+    br_hmac_out(&hc, a);
+    while (out_len) {
+        br_hmac_init(&hc, &kc, 0);
+        br_hmac_update(&hc, a, hl);
+        br_hmac_update(&hc, label, llen);
+        br_hmac_update(&hc, seed, seed_len);
+        br_hmac_out(&hc, block);
+        take = out_len < hl ? out_len : hl;
+        memcpy(out, block, take);
+        out += take;
+        out_len -= take;
+        br_hmac_init(&hc, &kc, 0);           /* A(i+1) = HMAC(secret, A(i)) */
+        br_hmac_update(&hc, a, hl);
+        br_hmac_out(&hc, a);
+    }
+    memset(a, 0, sizeof a);
+    memset(block, 0, sizeof block);
+    memset(&kc, 0, sizeof kc);
+    memset(&hc, 0, sizeof hc);
+}
+
+int ot12_keys_set(struct ot13_keys *k, const struct ot13_suite *s, const struct ot_impls *impls,
+                  const unsigned char *key, const unsigned char *iv)
+{
+    memset(k, 0, sizeof *k);
+    k->suite = s;
+    k->impls = impls;
+    memcpy(k->key, key, s->key_len);
+    memcpy(k->iv, iv, s->chacha ? 12 : 4);
+    if (!s->chacha) {
+        const br_block_ctr_class *ctr = impls->aes_ctr;
+        if (ctr->context_size > sizeof k->ctr) return -1;
+        ctr->init(&k->ctr.vtable, k->key, s->key_len);
+        ctr->run(&k->ctr.vtable, k->h, 0, k->h, 16);     /* H: AES of the zero block */
+    }
+    return 0;
+}
+
+/* seq_num, type, version and the plaintext's length (RFC 5246 section 6.2.3.3) */
+static void aad12(const struct ot13_keys *k, int type, size_t len, unsigned char *aad)
+{
+    int i;
+    for (i = 0; i < 8; ++i) aad[i] = (unsigned char)(k->seq >> (56 - 8 * i));
+    aad[8] = (unsigned char)type;
+    aad[9] = 3;
+    aad[10] = 3;
+    aad[11] = (unsigned char)(len >> 8);
+    aad[12] = (unsigned char)len;
+}
+
+size_t ot12_seal(struct ot13_keys *k, unsigned char *rec, int type, size_t len)
+{
+    unsigned char n[12], aad[13];
+    size_t rlen;
+    aad12(k, type, len, aad);
+    if (k->suite->chacha) {
+        nonce(k, n);                         /* the IV xor the sequence number (RFC 7905) */
+        k->impls->poly1305(k->key, n, rec + 5, len, aad, 13, rec + 5 + len, k->impls->chacha20, 1);
+        rlen = len + 16;
+    } else {
+        /* the salt, then the explicit nonce: the sequence number (RFC 5288) */
+        memmove(rec + 13, rec + 5, len);
+        memcpy(n, k->iv, 4);
+        memcpy(n + 4, aad, 8);
+        memcpy(rec + 5, aad, 8);
+        gcm(k, 1, n, aad, 13, rec + 13, len, rec + 13 + len);
+        rlen = 8 + len + 16;
+    }
+    rec[0] = (unsigned char)type;
+    rec[1] = 3;
+    rec[2] = 3;
+    rec[3] = (unsigned char)(rlen >> 8);
+    rec[4] = (unsigned char)rlen;
+    ++k->seq;
+    return 5 + rlen;
+}
+
+int ot12_open(struct ot13_keys *k, unsigned char *rec, size_t reclen, size_t *len)
+{
+    unsigned char n[12], aad[13], tag[16], diff = 0, *data;
+    size_t clen, i, over = k->suite->chacha ? 16 : 8 + 16;
+    if (reclen < 5 + over || reclen > OT13_RX_MAX) return BR_ERR_BAD_PARAM;
+    clen = reclen - 5 - over;
+    aad12(k, rec[0], clen, aad);
+    if (k->suite->chacha) {
+        data = rec + 5;
+        nonce(k, n);
+        k->impls->poly1305(k->key, n, data, clen, aad, 13, tag, k->impls->chacha20, 0);
+    } else {
+        data = rec + 13;
+        memcpy(n, k->iv, 4);
+        memcpy(n + 4, rec + 5, 8);
+        gcm(k, 0, n, aad, 13, data, clen, tag);
+    }
+    for (i = 0; i < 16; ++i) diff |= (unsigned char)(tag[i] ^ data[clen + i]);
+    if (diff) return BR_ERR_BAD_MAC;
+    ++k->seq;
+    if (clen > OT13_RECORD_MAX) return BR_ERR_TOO_LARGE;
+    if (data != rec + 5) memmove(rec + 5, data, clen);
+    *len = clen;
+    return 0;
+}
