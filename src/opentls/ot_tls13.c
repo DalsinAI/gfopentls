@@ -151,6 +151,31 @@ static size_t hlen_of(const br_hash_class *h)
     return (h->desc >> BR_HASHDESC_OUT_OFF) & BR_HASHDESC_OUT_MASK;
 }
 
+/* the services card may have this connection's key work: OTCF_NO_OFFLOAD keeps it here */
+static int svc_on(const struct OTConnection *c)
+{
+    return c && !(c->ctx->flags & OTCF_NO_OFFLOAD);
+}
+
+/**
+ * A server signature checked on the services card, against the server certificate's key.
+ *
+ * @param alg                           OTK_RSA_PKCS1, OTK_RSA_PSS, OTK_ECDSA or OTK_ED25519
+ * @param hc                            the hash of data, NULL for Ed25519
+ * @param data                          the hash, or the whole message for Ed25519
+ * @return                              1 good, 0 bad, -1 not done (check it here)
+ */
+static int svc_check(struct OTConnection *c, ULONG alg, const br_hash_class *hc,
+                     const unsigned char *data, size_t dlen, const unsigned char *sig, size_t siglen)
+{
+    static const ULONG digests[] = { 0, OTK_SHA1, OTK_SHA256, OTK_SHA384, OTK_SHA512 };
+    const unsigned char *spki;
+    size_t slen, hl = hc ? hlen_of(hc) : 0;
+    ULONG digest = digests[hl == 20 ? 1 : hl == 32 ? 2 : hl == 48 ? 3 : hl == 64 ? 4 : 0];
+    if (!svc_on(c) || (hc && !digest) || !ot_x509_spki(&c->x509, &spki, &slen)) return -1;
+    return ot_svc_verify(alg, digest, spki, slen, data, dlen, sig, siglen);
+}
+
 /* a reader over a message: every get checks the length, and a short read
  * sets bad, so a parser checks once at its end */
 struct rd { const unsigned char *p; size_t n; int bad; };
@@ -294,6 +319,7 @@ static void queue_ccs(struct ot13 *t)
 static LONG make_x25519(struct OTConnection *c, unsigned char *pub)
 {
     struct ot13 *t = c->t13;
+    if (svc_on(c) && ot_svc_keygen(OTK_X25519, t->x25519, 32, pub, 32) == 32) return OTERR_OK;
     if (ot_random(t->x25519, 32) != OTERR_OK) return OTERR_RANDOM;
     t->x25519[0] &= 0xF8;
     t->x25519[31] &= 0x7F;
@@ -307,6 +333,7 @@ static LONG make_p256(struct OTConnection *c, unsigned char *pub)
     struct ot13 *t = c->t13;
     const unsigned char *order;
     size_t olen, i;
+    if (svc_on(c) && ot_svc_keygen(OTK_P256, t->p256, 32, pub, 65) == 65) return OTERR_OK;
     do {        /* 0 < k < n; the first draw is almost always right */
         int below = 0, zero = 1;
         if (ot_random(t->p256, 32) != OTERR_OK) return OTERR_RANDOM;
@@ -328,6 +355,10 @@ static size_t make_ec(struct OTConnection *c, int curve, unsigned char *pub)
     struct ot13 *t = c->t13;
     const unsigned char *order;
     size_t olen, i;
+    if (curve == BR_EC_secp384r1 && svc_on(c) && ot_svc_keygen(OTK_P384, t->ecpriv, 48, pub, 97) == 97) {
+        t->ecpriv_len = 48;
+        return 97;
+    }
     order = c->impls.ec->order(curve, &olen);
     if (olen > sizeof t->ecpriv) return 0;
     do {
@@ -356,7 +387,8 @@ static size_t ecdhe(struct OTConnection *c, unsigned group, const unsigned char 
     if (group == GROUP_X25519) {
         if (len != 32) return 0;
         memcpy(g, share, 32);
-        if (!c->impls.ec->mul(g, 32, t->x25519, 32, BR_EC_curve25519)) return 0;
+        if ((!svc_on(c) || ot_svc_derive(OTK_X25519, t->x25519, 32, share, 32, g, 32) != 32)
+            && !c->impls.ec->mul(g, 32, t->x25519, 32, BR_EC_curve25519)) return 0;
         for (i = 0; i < 32; ++i) acc |= g[i];
         if (!acc) return 0;             /* a small-order point */
         memcpy(out, g, 32);
@@ -367,6 +399,9 @@ static size_t ecdhe(struct OTConnection *c, unsigned group, const unsigned char 
         int curve = group == GROUP_P384 ? BR_EC_secp384r1 : BR_EC_secp521r1;
         size_t plen = group == GROUP_P384 ? 97 : 133;
         if (len != plen || share[0] != 4 || !t->ecpriv_len) return 0;
+        if (curve == BR_EC_secp384r1 && svc_on(c)
+            && ot_svc_derive(OTK_P384, t->ecpriv, t->ecpriv_len, share, plen, out, 48) == 48)
+            return 48;
         memcpy(gg, share, plen);
         if (!c->impls.ec->mul(gg, plen, t->ecpriv, t->ecpriv_len, curve)) return 0;
         xoff = c->impls.ec->xoff(curve, &xlen);
@@ -375,6 +410,7 @@ static size_t ecdhe(struct OTConnection *c, unsigned group, const unsigned char 
         return xlen;
     }
     if (len != 65 || share[0] != 4) return 0;
+    if (svc_on(c) && ot_svc_derive(OTK_P256, t->p256, 32, share, 65, out, 32) == 32) return 32;
     memcpy(g, share, 65);
     if (!c->impls.ec->mul(g, 65, t->p256, 32, BR_EC_secp256r1)) return 0;
     xoff = c->impls.ec->xoff(BR_EC_secp256r1, &xlen);
@@ -768,7 +804,7 @@ int ot13_rsa_pss(const struct ot_impls *m, const br_rsa_public_key *pk, const br
     return ok;
 }
 
-int ot13_verify_cv(const struct ot_impls *m, unsigned scheme, const br_x509_pkey *pk,
+int ot13_verify_cv(struct OTConnection *c, const struct ot_impls *m, unsigned scheme, const br_x509_pkey *pk,
                    const unsigned char *ed25519, const unsigned char *thash, size_t thlen,
                    const unsigned char *sig, size_t siglen)
 {
@@ -776,11 +812,14 @@ int ot13_verify_cv(const struct ot_impls *m, unsigned scheme, const br_x509_pkey
     unsigned char content[64 + sizeof ctx + OT13_HASH_MAX], h[64];
     const br_hash_class *hc;
     size_t cl = 64 + sizeof ctx + thlen;       /* sizeof includes the 0 separator */
+    int sv;
     memset(content, 0x20, 64);
     memcpy(content + 64, ctx, sizeof ctx);
     memcpy(content + 64 + sizeof ctx, thash, thlen);
     if (scheme == 0x0807) {
         if (!ed25519 || siglen != 64) return BR_ERR_INVALID_ALGORITHM;
+        if ((sv = svc_check(c, OTK_ED25519, NULL, content, cl, sig, siglen)) >= 0)
+            return sv ? 0 : BR_ERR_BAD_SIGNATURE;
         return ot_glue_ed25519(sig, ed25519, content, cl) == 1 ? 0 : BR_ERR_BAD_SIGNATURE;
     }
     if (!pk) return BR_ERR_INVALID_ALGORITHM;
@@ -794,9 +833,13 @@ int ot13_verify_cv(const struct ot_impls *m, unsigned scheme, const br_x509_pkey
     if ((scheme & 0xFF) == 3) {
         int curve = scheme == 0x0403 ? BR_EC_secp256r1 : scheme == 0x0503 ? BR_EC_secp384r1 : BR_EC_secp521r1;
         if (pk->key_type != BR_KEYTYPE_EC || pk->key.ec.curve != curve) return BR_ERR_INVALID_ALGORITHM;
+        if ((sv = svc_check(c, OTK_ECDSA, hc, h, hlen_of(hc), sig, siglen)) >= 0)
+            return sv ? 0 : BR_ERR_BAD_SIGNATURE;
         return m->ecdsa_vrfy(m->ec, h, hlen_of(hc), &pk->key.ec, sig, siglen) ? 0 : BR_ERR_BAD_SIGNATURE;
     }
     if (pk->key_type != BR_KEYTYPE_RSA) return BR_ERR_INVALID_ALGORITHM;
+    if ((sv = svc_check(c, OTK_RSA_PSS, hc, h, hlen_of(hc), sig, siglen)) >= 0)
+        return sv ? 0 : BR_ERR_BAD_SIGNATURE;
     return ot13_rsa_pss(m, &pk->key.rsa, hc, h, sig, siglen) ? 0 : BR_ERR_BAD_SIGNATURE;
 }
 
@@ -1129,7 +1172,7 @@ static LONG certificate_verify(struct OTConnection *c, struct rd *r, const unsig
     if (!offered)
         return abort13(c, ALERT_ILLEGAL_PARAMETER, OTERR_CIPHER,
                        "The server signed with a scheme GFOpenTLS did not offer.");
-    err = ot13_verify_cv(&c->impls, scheme,
+    err = ot13_verify_cv(c, &c->impls, scheme,
                          c->x509.leaf_ed25519 ? NULL : (*xc)->get_pkey(xc, NULL),
                          c->x509.leaf_ed25519 ? c->x509.ed25519 : NULL,
                          thash, t->suite->hash_len, sig, n);
@@ -1481,12 +1524,13 @@ static LONG t12_server_key_exchange(struct OTConnection *c, struct rd *r)
     hc->update(&hctx.vtable, params, params_len);
     hc->out(&hctx.vtable, h);
     if ((scheme >> 8) == 8) {                         /* RSA-PSS with an rsaEncryption key */
-        if (pk->key_type == BR_KEYTYPE_RSA) ok = ot13_rsa_pss(&c->impls, &pk->key.rsa, hc, h, sig, siglen);
+        if (pk->key_type == BR_KEYTYPE_RSA && (ok = svc_check(c, OTK_RSA_PSS, hc, h, hl, sig, siglen)) < 0)
+            ok = ot13_rsa_pss(&c->impls, &pk->key.rsa, hc, h, sig, siglen);
     } else if ((scheme & 0xFF) == 1) {                /* RSA PKCS #1 v1.5 */
-        if (pk->key_type == BR_KEYTYPE_RSA)
+        if (pk->key_type == BR_KEYTYPE_RSA && (ok = svc_check(c, OTK_RSA_PKCS1, hc, h, hl, sig, siglen)) < 0)
             ok = c->impls.rsa_vrfy(sig, siglen, oid, hl, &pk->key.rsa, hout) && ct_equal(hout, h, hl);
     } else if ((scheme & 0xFF) == 3) {                /* ECDSA */
-        if (pk->key_type == BR_KEYTYPE_EC)
+        if (pk->key_type == BR_KEYTYPE_EC && (ok = svc_check(c, OTK_ECDSA, hc, h, hl, sig, siglen)) < 0)
             ok = c->impls.ecdsa_vrfy(c->impls.ec, h, hl, &pk->key.ec, sig, siglen) ? 1 : 0;
     }
     if (!ok) {

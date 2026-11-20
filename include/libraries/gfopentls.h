@@ -79,7 +79,7 @@
 
 /* struct OTContextConfig Flags. */
 #define OTCF_NO_SYSTEM_TRUST  (1UL << 0)  /* only CAFile and OT_AddTrust*() */
-#define OTCF_NO_OFFLOAD       (1UL << 1)  /* since 1.4 no effect: gfopencrypto.library decides */
+#define OTCF_NO_OFFLOAD       (1UL << 1)  /* since 1.7: no key work on the services card */
 #define OTCF_SMALL_BUFFERS    (1UL << 2)  /* ~17 KB per connection, not ~33 KB */
 
 struct OTContextConfig {
@@ -110,6 +110,7 @@ struct OTIOMessage {
 #define OTACC_X25519    (1UL << 3)
 #define OTACC_RSA       (1UL << 4)
 #define OTACC_ECDSA     (1UL << 5)
+#define OTACC_SERVICE   (1UL << 6)  /* 1.7: the TLS key work goes to the services card */
 
 #define OT_FINGERPRINT_SIZE 32   /* SHA-256 of the certificate's DER */
 

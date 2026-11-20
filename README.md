@@ -85,6 +85,12 @@ resumption by session ID), from the same ClientHello as TLS 1.3. The
 other TLS 1.2 suites still go to BearSSL. The first step of GFOpenTLS
 2.0 without BearSSL, DESIGN.md section 15.
 
+`gfopentls.library` 1.7 (20 November 2026): the TLS key work (key shares,
+ECDHE, the server's handshake signature) goes to the services card's
+`opentls.key/1` where gfopenservice.device offers it. The key exchange
+goes only to a card in this machine. `OTCF_NO_OFFLOAD` keeps it here, and
+`OTACC_SERVICE` says when the card answers. Step 2 of DESIGN.md section 15.
+
 Link stubs (6 November 2026), for programs that want the C calls and
 not the library bases:
 

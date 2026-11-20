@@ -72,7 +72,8 @@ target_include_directories(bearssl PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_part
 add_library(opentls STATIC
     src/opentls/ot_core.c src/opentls/ot_glue.c src/opentls/ot_platform.c
     src/opentls/ot_random.c src/opentls/ot_trust.c src/opentls/ot_x509.c
-    src/opentls/ot_tls13.c src/opentls/ot_tls13_keys.c src/opentls/ot_tls13_bridge.c)
+    src/opentls/ot_tls13.c src/opentls/ot_tls13_keys.c src/opentls/ot_tls13_bridge.c
+    src/opentls/ot_service.c)
 target_include_directories(opentls PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/host/include
                                           ${CMAKE_CURRENT_SOURCE_DIR}/include
                                    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bearssl/src)
@@ -81,6 +82,17 @@ target_link_libraries(opentls PUBLIC bearssl opencrypto)
 
 add_executable(opentls_client tests/opentls_client.c)
 target_link_libraries(opentls_client PRIVATE opentls)
+# the same client with the key work on a services card (gfopenservice's
+# opentls.key/1 host code, tests/service_host), when OpenSSL 3 is here
+find_package(OpenSSL 3)
+if(OPENSSL_FOUND)
+    add_executable(opentls_client_svc tests/opentls_client.c tests/service_host/svc_host.c
+                   tests/service_host/opentls_key.c)
+    target_compile_definitions(opentls_client_svc PRIVATE OT_TEST_SERVICE)
+    target_include_directories(opentls_client_svc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/service_host
+                               ${CMAKE_CURRENT_SOURCE_DIR}/src/opentls ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bearssl/src)
+    target_link_libraries(opentls_client_svc PRIVATE opentls OpenSSL::Crypto)
+endif()
 add_executable(opentls_ftps_get tests/opentls_ftps_get.c)
 target_link_libraries(opentls_ftps_get PRIVATE opentls)
 # BearSSL's own hash code under other names (tests/bearssl_hash_ref.h): the
@@ -120,4 +132,12 @@ if(Python3_FOUND)
                      $<TARGET_FILE:opentls_client> $<TARGET_FILE:opentls_ftps_get>)
     set_tests_properties(opentls_local_servers_bearssl12 PROPERTIES
                          ENVIRONMENT "OPENTLS_TEST_TLS12_BEARSSL=1;OPENTLS_TEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/tls-local-bearssl12")
+    if(OPENSSL_FOUND)
+        # the key work on the services card (DESIGN.md section 15, step 2)
+        add_test(NAME opentls_local_servers_service
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tls_local.py
+                         $<TARGET_FILE:opentls_client_svc> $<TARGET_FILE:opentls_ftps_get>)
+        set_tests_properties(opentls_local_servers_service PROPERTIES
+                             ENVIRONMENT "OPENTLS_TEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/tls-local-service")
+    endif()
 endif()

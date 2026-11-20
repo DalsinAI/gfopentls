@@ -16,11 +16,12 @@
 #include "bearssl.h"
 
 #define OT_LIB_VERSION   1
-#define OT_LIB_REVISION  6          /* 1.1: OT_GetPeerName; 1.2: S:GFOpenTLS/ca-bundle.pem, ENVARC:GFOpenTLS/certs/;
+#define OT_LIB_REVISION  7          /* 1.1: OT_GetPeerName; 1.2: S:GFOpenTLS/ca-bundle.pem, ENVARC:GFOpenTLS/certs/;
                                        1.3: TLS 1.3, OT_SetVersion, OT_SessionHasTicket;
                                        1.4: all maths in gfopencrypto.library 2.3, none of BearSSL's;
                                        1.5: OTV_REPORT, the whole chain, certificate fields, group and MAC names;
-                                       1.6: TLS 1.2 with ECDHE and AEAD suites by our own client */
+                                       1.6: TLS 1.2 with ECDHE and AEAD suites by our own client;
+                                       1.7: the key work on the services card (OTACC_SERVICE) */
 
 #define OT_HOST_MAX      255
 #define OT_ALPN_MAX      8          /* protocols offered at once */
@@ -100,6 +101,52 @@ void ot_glue_select(struct ot_impls *impls, int offload);
 int ot_glue_has_ed25519(void);
 int ot_glue_ed25519(const unsigned char *sig, const unsigned char *pk, const void *msg, size_t len);
 
+/* ---- the services card: gfopenservice.device's opentls.key/1 (ot_service.c) ---- */
+#define OTK_VERIFY    1
+#define OTK_KEYGEN    2
+#define OTK_DERIVE    3
+#define OTK_RSA_PKCS1 1             /* OTK_VERIFY: arg */
+#define OTK_RSA_PSS   2
+#define OTK_ECDSA     3
+#define OTK_ED25519   4
+#define OTK_SHA1      1             /* OTK_VERIFY: extra[0] */
+#define OTK_SHA256    2
+#define OTK_SHA384    3
+#define OTK_SHA512    4
+#define OTK_X25519    1             /* OTK_KEYGEN, OTK_DERIVE: arg */
+#define OTK_P256      2
+#define OTK_P384      3
+#define OTSVC_WHERE_CARD 1          /* OSWHERE_CARD: this machine's host */
+struct ot_sbuf {
+    const unsigned char *in;
+    unsigned char *out;
+    ULONG length;
+    ULONG written;
+};
+/* one opentls.key/1 request: the service's status (0 done) */
+typedef LONG (*ot_svc_transport)(UWORD op, ULONG arg, const ULONG extra[4], struct ot_sbuf buf[4],
+                                 ULONG *result, ULONG *aux);
+/**
+ * Whether the services card can take this kind of work.
+ *
+ * @param keys                          the key exchange too, not only signature checks: those
+ *                                      give the host the session keys, so a card in this machine only
+ * @return                              1 when it can
+ */
+int ot_svc_ready(int keys);
+/* a signature check: 1 good, 0 bad, -1 not done (do it here) */
+int ot_svc_verify(ULONG alg, ULONG digest, const unsigned char *spki, size_t spki_len,
+                  const unsigned char *data, size_t data_len, const unsigned char *sig, size_t sig_len);
+/* a key pair: the public key's length, 0 when not done */
+size_t ot_svc_keygen(ULONG curve, unsigned char *priv, size_t priv_len, unsigned char *pub, size_t pub_room);
+/* the shared secret: its length, 0 when not done */
+size_t ot_svc_derive(ULONG curve, const unsigned char *priv, size_t priv_len,
+                     const unsigned char *peer, size_t peer_len, unsigned char *out, size_t room);
+ULONG ot_svc_calls(void);               /* requests the card answered */
+void ot_svc_install(ot_svc_transport fn, ULONG where);  /* the host tests' card */
+int ot_svc_init(void);                  /* library init: the lock */
+void ot_svc_cleanup(void);              /* library expunge */
+
 /* ---- trust (ot_trust.c) ---- */
 struct ot_anchors {
     br_x509_trust_anchor *ta;
@@ -152,6 +199,8 @@ void ot_x509_free(struct ot_x509 *x);
 /* the first DNS name (or CN) of a certificate, for messages */
 void ot_cert_name(const unsigned char *der, size_t len, char *out, size_t outlen);
 int ot_cert_has_ip(const unsigned char *der, size_t len, const unsigned char *ip, size_t iplen);
+/* the server certificate's SubjectPublicKeyInfo (DER, whole); 0 when it is not kept */
+int ot_x509_spki(const struct ot_x509 *x, const unsigned char **spki, size_t *len);
 
 /* ---- the objects ---- */
 struct OTContext {

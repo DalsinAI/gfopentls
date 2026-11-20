@@ -126,13 +126,13 @@ static void test_rfc8448_s3(const struct ot_impls *m)
         pk.key.rsa.e = (unsigned char *)e;
         pk.key.rsa.elen = 3;
         CHECK(get16be(cv.p + 4) == 0x0804, "the RFC's scheme");
-        CHECK(ot13_verify_cv(m, 0x0804, &pk, NULL, th, 32, cv.p + 8, get16be(cv.p + 6)) == 0,
+        CHECK(ot13_verify_cv(NULL, m, 0x0804, &pk, NULL, th, 32, cv.p + 8, get16be(cv.p + 6)) == 0,
               "CertificateVerify verifies");
         cv.p[20] ^= 0x10;
-        CHECK(ot13_verify_cv(m, 0x0804, &pk, NULL, th, 32, cv.p + 8, get16be(cv.p + 6)) == BR_ERR_BAD_SIGNATURE,
+        CHECK(ot13_verify_cv(NULL, m, 0x0804, &pk, NULL, th, 32, cv.p + 8, get16be(cv.p + 6)) == BR_ERR_BAD_SIGNATURE,
               "a changed CertificateVerify does not");
         cv.p[20] ^= 0x10;
-        CHECK(ot13_verify_cv(m, 0x0403, &pk, NULL, th, 32, cv.p + 8, get16be(cv.p + 6)) == BR_ERR_INVALID_ALGORITHM,
+        CHECK(ot13_verify_cv(NULL, m, 0x0403, &pk, NULL, th, 32, cv.p + 8, get16be(cv.p + 6)) == BR_ERR_INVALID_ALGORITHM,
               "ECDSA scheme with an RSA key");
         free(n.p);
     }

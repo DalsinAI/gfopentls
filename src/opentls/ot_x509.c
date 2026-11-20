@@ -181,6 +181,35 @@ static int leaf_parse(const unsigned char *der, size_t len, struct leaf_parts *l
     return 1;
 }
 
+/* the leaf's SubjectPublicKeyInfo, whole */
+int ot_x509_spki(const struct ot_x509 *x, const unsigned char **spki, size_t *len)
+{
+    const unsigned char *der = x->leaf;
+    size_t dlen = x->leaf_len;
+    struct der d, cert, tbs, e, w;
+    unsigned tag;
+    int field = 0;
+    if (!x->leaf_ok) {
+        if (!x->chain_ok || x->chain_count < 1) return 0;
+        der = x->chain + x->chain_off[0];
+        dlen = x->chain_end[0] - x->chain_off[0];
+    }
+    d.p = der;
+    d.len = dlen;
+    if (!der_next(&d, &tag, &cert) || tag != 0x30) return 0;
+    if (!der_next(&cert, &tag, &tbs) || tag != 0x30) return 0;
+    while (der_whole(&tbs, &tag, &e, &w)) {
+        if (tag == 0xA0 && field == 0) continue;            /* version */
+        if (field++ == 5) {
+            if (tag != 0x30) return 0;
+            *spki = w.p;
+            *len = w.len;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /* the key, when the SubjectPublicKeyInfo is Ed25519's (1.3.101.112) */
 static int spki_ed25519(const struct der *spki, unsigned char *key)
 {
