@@ -522,3 +522,24 @@ already GFOpenCrypto's (section 12).
   card path for the key operations, measured against the magic functions.
   3. X.509 and the anchors. 4. BearSSL and its tables out of the build,
   the version range raised, `OT_LIB_VERSION` 2.
+
+**Step 2, done in 1.7 (20 November 2026).** `ot_service.c` opens
+gfopenservice.device's `opentls.key/1` once, at the first handshake, and
+keeps it to expunge. Each request is one DoIO from the calling task on its
+own port, so connections on several tasks wait for their own answers.
+- Key shares on X25519, P-256 and P-384 (`OTK_KEYGEN`), ECDHE
+  (`OTK_DERIVE`), and the server's signature: TLS 1.3 CertificateVerify,
+  and TLS 1.2 ServerKeyExchange (`OTK_VERIFY` with the leaf's
+  SubjectPublicKeyInfo: RSA PKCS #1, RSA-PSS, ECDSA, Ed25519).
+- Key generation and ECDHE hand the host the session keys, so they go to a
+  card in this machine only (`OSWHERE_CARD`). A paired Cradle on the LAN
+  gets the signature checks alone.
+- The key formats are the same on both sides. Any refusal or lost request
+  is done here instead, by GFOpenCrypto. P-521 has no service operation and
+  stays here.
+- `OTCF_NO_OFFLOAD` keeps a context's key work off the card, and
+  `OT_Accelerated()` sets `OTACC_SERVICE` when the card answers.
+- The chain's own signatures are still BearSSL's minimal engine (step 3).
+- Host tests: `opentls_local_servers_service` runs the local server matrix
+  with gfopenservice's `host/opentls_key.c` as the card, in process.
+
