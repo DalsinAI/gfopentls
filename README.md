@@ -91,6 +91,12 @@ ECDHE, the server's handshake signature) goes to the services card's
 goes only to a card in this machine. `OTCF_NO_OFFLOAD` keeps it here, and
 `OTACC_SERVICE` says when the card answers. Step 2 of DESIGN.md section 15.
 
+`gfopentls.library` 1.8 (20 November 2026): our own certificate chain
+check in place of BearSSL's. It takes chains in any order, RSA-PSS and
+Ed25519 signatures anywhere in the chain, path length and key usage
+constraints, and serverAuth. The CN is used only without dNSNames.
+Step 3 of DESIGN.md section 15.
+
 Link stubs (6 November 2026), for programs that want the C calls and
 not the library bases:
 

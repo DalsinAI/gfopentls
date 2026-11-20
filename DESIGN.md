@@ -543,3 +543,34 @@ own port, so connections on several tasks wait for their own answers.
 - Host tests: `opentls_local_servers_service` runs the local server matrix
   with gfopenservice's `host/opentls_key.c` as the card, in process.
 
+**Step 3, done in 1.8 (20 November 2026).** The chain check is ours
+(`ot_x509.c`). BearSSL's minimal engine and its decoder are no longer used.
+- **The path.** From the server's certificate, each issuer is looked for
+  first among the trust anchors (by name, the anchor's key checking the
+  signature), then among the other certificates the server sent, in any
+  order (BearSSL wanted them in order).
+- **The rules.**
+  - A CA on the way needs basicConstraints cA, a pathLenConstraint that
+    allows the CAs below it, keyCertSign when it has a keyUsage, and its
+    dates.
+  - The server's certificate needs its dates, serverAuth when it has an
+    extendedKeyUsage (new), and the name or address.
+  - The name is matched against the dNSNames, or the subject's CN only
+    when there are none. BearSSL took the CN either way.
+  - An anchor without the CA flag that is the server's own name and key
+    is trusted as it is, as before.
+- **Unsupported, so they fail when critical:** unknown critical
+  extensions, name constraints and policy constraints. A critical
+  certificatePolicies is fine when its only qualifiers are CPS pointers.
+- **Signatures:** RSA PKCS #1 v1.5 (SHA-1, SHA-256, SHA-384, SHA-512),
+  RSA-PSS with its parameters (new), ECDSA on P-256, P-384 and P-521, and
+  Ed25519 anywhere in the chain (new). These go on the services card when
+  there is one, with an anchor's key encoded as a SubjectPublicKeyInfo for
+  it.
+- **Keys:** RSA from 1024 to 8192 bits.
+- **Tests:** ten new cases in the local server matrix, each one checked to
+  fail with its rule taken out.
+- **What BearSSL still has:** the trust anchor structure, the key and
+  hash types, and the TLS 1.2 engine for the suites that are not ours yet
+  (step 4).
+

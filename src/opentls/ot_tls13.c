@@ -173,7 +173,7 @@ static int svc_check(struct OTConnection *c, ULONG alg, const br_hash_class *hc,
     size_t slen, hl = hc ? hlen_of(hc) : 0;
     ULONG digest = digests[hl == 20 ? 1 : hl == 32 ? 2 : hl == 48 ? 3 : hl == 64 ? 4 : 0];
     if (!svc_on(c) || (hc && !digest) || !ot_x509_spki(&c->x509, &spki, &slen)) return -1;
-    return ot_svc_verify(alg, digest, spki, slen, data, dlen, sig, siglen);
+    return ot_svc_verify(alg, digest, 0, spki, slen, data, dlen, sig, siglen);
 }
 
 /* a reader over a message: every get checks the length, and a short read
@@ -788,18 +788,25 @@ static void pss_sha512(const void *d, size_t n, uint8_t *o) { hash_once(&br_sha5
 int ot13_rsa_pss(const struct ot_impls *m, const br_rsa_public_key *pk, const br_hash_class *h,
                  const unsigned char *hash, const unsigned char *sig, size_t siglen)
 {
+    return ot_rsa_pss(m, pk, h, hash, hlen_of(h), sig, siglen);
+}
+
+int ot_rsa_pss(const struct ot_impls *m, const br_rsa_public_key *pk, const br_hash_class *h,
+               const unsigned char *hash, size_t salt, const unsigned char *sig, size_t siglen)
+{
     unsigned char *em;
     const unsigned char *n = pk->n;
     size_t nlen = pk->nlen, bits, hl = hlen_of(h);
     int ok;
     oc_hash_fn fn = h == &br_sha384_vtable ? pss_sha384 : h == &br_sha512_vtable ? pss_sha512 : pss_sha256;
+    if (h != &br_sha256_vtable && h != &br_sha384_vtable && h != &br_sha512_vtable) return 0;
     while (nlen && !n[0]) { ++n; --nlen; }
     if (!nlen || siglen != nlen || nlen > OC_RSA_MAX_BYTES) return 0;
     for (bits = 8 * nlen; !(n[0] & (0x80 >> (8 * nlen - bits))); --bits) {}
     em = ot_alloc(nlen);
     if (!em) return 0;
     memcpy(em, sig, nlen);
-    ok = m->rsa_pub(em, nlen, pk) && oc_emsa_pss_verify(em, nlen, bits, hash, hl, (long)hl, fn);
+    ok = m->rsa_pub(em, nlen, pk) && oc_emsa_pss_verify(em, nlen, bits, hash, hl, (long)salt, fn);
     ot_free(em);
     return ok;
 }
