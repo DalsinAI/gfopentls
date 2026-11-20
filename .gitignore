@@ -7,3 +7,4 @@ build-dbg/
 build-amiga-tls*/
 build-amiga-tls*.log
 build-ca-bundle/
+build-svc/

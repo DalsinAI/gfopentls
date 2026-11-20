@@ -213,9 +213,10 @@ struct ot13_ticket *ot13_ticket_copy(const struct ot13_ticket *t);
 void ot13_session_wait(struct OTConnection *c, struct OTSession *s);
 void ot13_session_unwait(struct OTSession *s);
 
-/* the signatures: CertificateVerify's (0 or a BR_ERR_* code), and an
- * RSA-PSS check of a hash (1 or 0), which the bridge uses too */
-int ot13_verify_cv(const struct ot_impls *m, unsigned scheme, const br_x509_pkey *pk,
+/* the signatures: CertificateVerify's (0 or a BR_ERR_* code; c NULL: all
+ * here, none on the services card), and an RSA-PSS check of a hash (1 or
+ * 0), which the bridge uses too */
+int ot13_verify_cv(struct OTConnection *c, const struct ot_impls *m, unsigned scheme, const br_x509_pkey *pk,
                    const unsigned char *ed25519, const unsigned char *thash, size_t thlen,
                    const unsigned char *sig, size_t siglen);
 int ot13_rsa_pss(const struct ot_impls *m, const br_rsa_public_key *pk, const br_hash_class *h,

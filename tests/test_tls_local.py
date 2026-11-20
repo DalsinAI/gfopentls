@@ -161,10 +161,18 @@ def run_case(name, server, client_args, expect, env, host):
         label = name + ("" if offload else " (no offload)")
         args = list(client_args) + ([] if offload else ["--no-offload"]) + [host, str(server.port)]
         out = run_client(args, env)
-        bad = [k for k, v in expect.items() if out.get(k) != v]
+        bad = [k for k, v in expect.items() if not k.startswith("_") and out.get(k) != v]
+        # the client with a services card (opentls_client_svc): the key work
+        # goes there, and none of it with --no-offload. "_service": False
+        # marks a case BearSSL's TLS 1.2 does on its own, with no card.
+        want_calls = offload and expect.get("_service", True)
+        if "service_calls" in out and expect.get("result") == "ok":
+            if (out["service_calls"] != "0") != want_calls:
+                bad.append("service_calls")
         if bad:
             failures.append(label)
-            print("FAIL %s: wanted %s\n%s" % (label, {k: expect[k] for k in bad}, out["_text"]))
+            print("FAIL %s: wanted %s\n%s" % (label, {k: expect.get(k, "calls" if want_calls else "none") for k in bad},
+                                               out["_text"]))
         else:
             print("ok   %s" % label)
 
@@ -187,7 +195,7 @@ def main():
     case("TLS 1.2, ECDSA chain (P-256 leaf, P-384 intermediate, RSA root)", Server("ecleaf", NO13),
          CA + get + ["--expect", "TLSv1.2"], {"result": "ok", "conn0.protocol": "0303"})
     case("TLS 1.2 only in GFOpenTLS (BearSSL alone)", Server("ecleaf"),
-         CA + get + ["--max", "12", "--expect", "TLSv1.2"], {"result": "ok", "conn0.protocol": "0303"})
+         CA + get + ["--max", "12", "--expect", "TLSv1.2"], {"result": "ok", "conn0.protocol": "0303", "_service": False})
     case("session resumption by session ID (3 connections)", Server("ecleaf", NO13),
          CA + ["--connections", "3"], {"result": "ok", "conn0.resumed": "0", "conn1.resumed": "1",
                                         "conn2.resumed": "1"})
@@ -266,7 +274,7 @@ def main():
          CA + ["--small", "--send", "GET /big.bin HTTP/1.0\\r\\n\\r\\n"],
          {"result": "ok", "conn0.protocol": "0304", "conn0.received": str((1 << 20) + len(WWW_HEADER))})
     case("OT_SetVersion: TLS 1.2 at most", Server("ecleaf"), CA + get + ["--version", "0,12"],
-         {"result": "ok", "conn0.protocol": "0303"})
+         {"result": "ok", "conn0.protocol": "0303", "_service": False})
     case("OT_SetVersion: TLS 1.3 only, TLS 1.2 server", Server("ecleaf", NO13), CA + ["--version", "13,13"],
          {"result": "fail", "conn0.error": "-7"})
     case("OT_SetVersion: a bad range", Server("ecleaf"), CA + ["--version", "13,12"],

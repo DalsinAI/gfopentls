@@ -1075,7 +1075,7 @@ LONG OT_Random(APTR buffer, LONG length)
 
 ULONG OT_Accelerated(VOID)
 {
-    return ot_glue_accelerated();
+    return ot_glue_accelerated() | (ot_svc_ready(0) ? OTACC_SERVICE : 0);
 }
 
 /* ---- version 1, revision 5 (6 November 2026): for FileZilla ---- */

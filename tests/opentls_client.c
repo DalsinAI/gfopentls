@@ -31,12 +31,17 @@
  *     --version MIN,MAX  OT_SetVersion() on each connection (0: the context's)
  *     --upload N       write N bytes before --send (KeyUpdate, large writes)
  *     --converse       answer each PING read with PONG (KeyUpdate tests)
+ * Built with OT_TEST_SERVICE (opentls_client_svc), the key work goes to the
+ * host tests' services card and service_calls= says how much did.
  * Prints key=value lines; exit code 0 when all went as asked.
  *
  * MIT licensed and free. Copyright (c) 2026 AmiCradle Team. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef OT_TEST_SERVICE
+#include "svc_host.h"
+#endif
 
 #ifdef __amigaos__
 #include <exec/types.h>
@@ -467,6 +472,9 @@ int main(int argc, char **argv)
     if (!OpenDevice((CONST_STRPTR)TIMERNAME, UNIT_ECLOCK, (struct IORequest *)&treq, 0))
         TimerBase = treq.tr_node.io_Device;
 #endif
+#ifdef OT_TEST_SERVICE
+    svc_host_install();
+#endif
     printf("version=%lx\naccelerated=%lx\n", (unsigned long)OT_Version(), (unsigned long)OT_Accelerated());
     if (opt_certfile) {
         int rc = cert_file(opt_certfile);
@@ -505,6 +513,9 @@ int main(int argc, char **argv)
         OT_FreeSession(session);
         OT_FreeContext(ctx);
     }
+#ifdef OT_TEST_SERVICE
+    printf("service_calls=%lu\n", svc_host_calls());
+#endif
     printf("result=%s\n", ok ? "ok" : "fail");
 #ifdef __amigaos__
     if (TimerBase) CloseDevice((struct IORequest *)&treq);
