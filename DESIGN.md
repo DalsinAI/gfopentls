@@ -504,12 +504,21 @@ already GFOpenCrypto's (section 12).
   (RSA PKCS #1, RSA-PSS, ECDSA, Ed25519), dates, basicConstraints and
   pathLen, keyUsage and extendedKeyUsage, names and addresses as now.
   Anchors kept as our own structure, read from the same PEM bundle.
-- **The services card.** On AmiCradle each operation already runs as host
-  code through AC090's magic functions. With a services card or a paired
-  Cradle offering it, `opentls.key/1` takes the same operations where
-  there are no magic functions (a real Amiga with the card), and a later
-  service can take a whole connection to the host's OpenSSL 3.
+- **The services card first.** A magic function runs on the emulator's own
+  core, inline in the JIT, so the whole Amiga waits while it works. The
+  services card (or AkikoPlus) runs a request on its worker threads, on
+  the host's other cores, while the 68k goes on with other tasks; the
+  calling task waits on its signal and the JIT carries on at host speed.
+  So where the card offers `opentls.key/1`, every public-key operation
+  goes there (key shares, ECDHE, signature checks, the chain's
+  signatures), and the bulk AEAD of a full 16 KB record too, when that is
+  quicker than the round trip (measured, not assumed). Magic functions
+  stay the fall-back on AmiCradle without the card, and our 68k code on
+  a real Amiga without one. `opentls.key/1` grows the operations TLS 1.2
+  and the record layer need. A later service can take a whole connection
+  to the host's OpenSSL 3.
 - **Order.** 1. TLS 1.2 handshake and records, BearSSL still checking the
-  chain; tested against the same OpenSSL servers as now. 2. X.509 and the
-  anchors. 3. BearSSL and its tables out of the build, the version range
-  raised, `OT_LIB_VERSION` 2.
+  chain; tested against the same OpenSSL servers as now. 2. The services
+  card path for the key operations, measured against the magic functions.
+  3. X.509 and the anchors. 4. BearSSL and its tables out of the build,
+  the version range raised, `OT_LIB_VERSION` 2.
