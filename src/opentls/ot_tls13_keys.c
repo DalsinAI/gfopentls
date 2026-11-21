@@ -9,9 +9,9 @@
 #include "ot_tls13.h"
 
 static const struct ot13_suite suites[] = {
-    { OT13_AES_128_GCM_SHA256, "TLS_AES_128_GCM_SHA256", 0, 16, &br_sha256_vtable, 32 },
-    { OT13_AES_256_GCM_SHA384, "TLS_AES_256_GCM_SHA384", 0, 32, &br_sha384_vtable, 48 },
-    { OT13_CHACHA20_POLY1305_SHA256, "TLS_CHACHA20_POLY1305_SHA256", 1, 32, &br_sha256_vtable, 32 },
+    { OT13_AES_128_GCM_SHA256, "TLS_AES_128_GCM_SHA256", 0, 16, &br_sha256_vtable, 32, NULL, 0, 0, 0 },
+    { OT13_AES_256_GCM_SHA384, "TLS_AES_256_GCM_SHA384", 0, 32, &br_sha384_vtable, 48, NULL, 0, 0, 0 },
+    { OT13_CHACHA20_POLY1305_SHA256, "TLS_CHACHA20_POLY1305_SHA256", 1, 32, &br_sha256_vtable, 32, NULL, 0, 0, 0 },
 };
 
 const struct ot13_suite *ot13_suite(unsigned id)
@@ -266,12 +266,23 @@ void ot12_prf(const br_hash_class *h, const unsigned char *secret, size_t slen, 
 }
 
 int ot12_keys_set(struct ot13_keys *k, const struct ot13_suite *s, const struct ot_impls *impls,
-                  const unsigned char *key, const unsigned char *iv)
+                  const unsigned char *mac, const unsigned char *key, const unsigned char *iv, int write)
 {
     memset(k, 0, sizeof *k);
     k->suite = s;
     k->impls = impls;
     memcpy(k->key, key, s->key_len);
+    if (s->mac) {
+        memcpy(k->mac_key, mac, s->mac_len);
+        if (write) {
+            if (impls->aes_cbcenc->context_size > sizeof k->ctr) return -1;
+            impls->aes_cbcenc->init(&k->ctr.cbcenc, k->key, s->key_len);
+        } else {
+            if (impls->aes_cbcdec->context_size > sizeof k->ctr) return -1;
+            impls->aes_cbcdec->init(&k->ctr.cbcdec, k->key, s->key_len);
+        }
+        return 0;
+    }
     memcpy(k->iv, iv, s->chacha ? 12 : 4);
     if (!s->chacha) {
         const br_block_ctr_class *ctr = impls->aes_ctr;
@@ -294,12 +305,88 @@ static void aad12(const struct ot13_keys *k, int type, size_t len, unsigned char
     aad[12] = (unsigned char)len;
 }
 
+/* HMAC(mac_key, seq_num, type, version, length, content) (RFC 5246 section 6.2.3.1) */
+static void cbc_mac(const struct ot13_keys *k, const unsigned char *aad, const unsigned char *data, size_t len,
+                    unsigned char *out)
+{
+    br_hmac_key_context kc;
+    br_hmac_context hc;
+    br_hmac_key_init(&kc, k->suite->mac, k->mac_key, k->suite->mac_len);
+    br_hmac_init(&hc, &kc, 0);
+    br_hmac_update(&hc, aad, 13);
+    br_hmac_update(&hc, data, len);
+    br_hmac_out(&hc, out);
+}
+
+/* AES-CBC with HMAC (RFC 5246 section 6.2.3.2): a fresh IV, then the
+ * content, its MAC and the padding, encrypted */
+static size_t cbc_seal(struct ot13_keys *k, unsigned char *rec, int type, size_t len)
+{
+    unsigned char aad[13], iv[16];
+    unsigned char *data = rec + 5 + 16;
+    size_t ml = k->suite->mac_len, pad, i, total;
+    aad12(k, type, len, aad);
+    if (ot_random(iv, 16) != OTERR_OK) return 0;
+    memmove(data, rec + 5, len);
+    memcpy(rec + 5, iv, 16);
+    cbc_mac(k, aad, data, len, data + len);
+    pad = 15 - (len + ml) % 16;
+    for (i = 0; i <= pad; ++i) data[len + ml + i] = (unsigned char)pad;
+    total = len + ml + pad + 1;
+    k->ctr.cbcenc->run(&k->ctr.cbcenc, iv, data, total);
+    return 16 + total;
+}
+
+/* The MAC is computed over the length the padding gives, or with no
+ * padding when it is bad, and the bytes past it are hashed too, so that a
+ * bad padding costs about the time a good one does (Lucky Thirteen). */
+static int cbc_open(struct ot13_keys *k, unsigned char *rec, size_t reclen, size_t *len)
+{
+    unsigned char aad[13], iv[16], mac[48], diff, good;
+    unsigned char *data = rec + 5 + 16;
+    size_t ml = k->suite->mac_len, dlen, pad, plen, i, scan;
+    if (reclen < 5 + 16 + 16 || (reclen - 5 - 16) % 16 || reclen - 5 - 16 < ml + 1) return BR_ERR_BAD_PARAM;
+    if (reclen > OT13_RX_MAX) return BR_ERR_BAD_PARAM;
+    dlen = reclen - 5 - 16;
+    memcpy(iv, rec + 5, 16);
+    k->ctr.cbcdec->run(&k->ctr.cbcdec, iv, data, dlen);
+    pad = data[dlen - 1];
+    good = (unsigned char)(pad + 1 + ml <= dlen);
+    scan = dlen < 256 ? dlen : 256;
+    for (i = 0; i < scan; ++i) {
+        unsigned char in = (unsigned char)(i <= pad);
+        good &= (unsigned char)(!in | (data[dlen - 1 - i] == pad));
+    }
+    plen = good ? dlen - ml - pad - 1 : dlen - ml - 1;
+    aad12(k, rec[0], plen, aad);
+    cbc_mac(k, aad, data, plen, mac);
+    {
+        br_hmac_key_context kc;
+        br_hmac_context hc;
+        unsigned char dummy[48];
+        br_hmac_key_init(&kc, k->suite->mac, k->mac_key, ml);
+        br_hmac_init(&hc, &kc, 0);
+        br_hmac_update(&hc, data + plen, dlen - ml - 1 - plen);
+        br_hmac_out(&hc, dummy);
+    }
+    diff = (unsigned char)!good;
+    for (i = 0; i < ml; ++i) diff |= (unsigned char)(mac[i] ^ data[plen + i]);
+    if (diff) return BR_ERR_BAD_MAC;
+    ++k->seq;
+    if (plen > OT13_RECORD_MAX) return BR_ERR_TOO_LARGE;
+    memmove(rec + 5, data, plen);
+    *len = plen;
+    return 0;
+}
+
 size_t ot12_seal(struct ot13_keys *k, unsigned char *rec, int type, size_t len)
 {
     unsigned char n[12], aad[13];
     size_t rlen;
     aad12(k, type, len, aad);
-    if (k->suite->chacha) {
+    if (k->suite->mac) {
+        if (!(rlen = cbc_seal(k, rec, type, len))) return 0;
+    } else if (k->suite->chacha) {
         nonce(k, n);                         /* the IV xor the sequence number (RFC 7905) */
         k->impls->poly1305(k->key, n, rec + 5, len, aad, 13, rec + 5 + len, k->impls->chacha20, 1);
         rlen = len + 16;
@@ -325,6 +412,7 @@ int ot12_open(struct ot13_keys *k, unsigned char *rec, size_t reclen, size_t *le
 {
     unsigned char n[12], aad[13], tag[16], diff = 0, *data;
     size_t clen, i, over = k->suite->chacha ? 16 : 8 + 16;
+    if (k->suite->mac) return cbc_open(k, rec, reclen, len);
     if (reclen < 5 + over || reclen > OT13_RX_MAX) return BR_ERR_BAD_PARAM;
     clen = reclen - 5 - over;
     aad12(k, rec[0], clen, aad);

@@ -29,6 +29,8 @@
 #define OT_TEXT_MAX      200
 #define OT_LEAF_MAX      16384      /* the server's certificate kept for the caller */
 #define OT_OUT_MAX       4096       /* small records gathered into one send */
+#define OT_IOBUF_SMALL   (5 + 16384 + 320)               /* one record in (OT13_RX_MAX) */
+#define OT_IOBUF_LARGE   (OT_IOBUF_SMALL + 5 + 16384 + 80 + 64)  /* and one whole record out */
 #define OT_CHAIN_MAX     10         /* certificates kept from the server's chain */
 #define OT_CHAIN_BYTES   65536      /* and their bytes together */
 
@@ -58,8 +60,6 @@ void ot_local_to_utc(uint32_t days, uint32_t seconds, long west,
  * it small) */
 #define OT_KEY_UPDATE_AFTER (1UL << 23)
 uint32_t ot_key_update_after(void);
-/* TLS 1.2 by BearSSL instead of our own client (the host tests compare them) */
-int ot_tls12_bearssl(void);
 LONG ot_sock_read(LONG fd, struct Library *socketbase, void *buf, LONG len);
 LONG ot_sock_write(LONG fd, struct Library *socketbase, const void *buf, LONG len);
 LONG ot_hook_call(struct Hook *hook, void *object, struct OTIOMessage *msg);
@@ -227,8 +227,17 @@ struct OTContext {
 struct ot13_ticket;
 struct ot13;
 
+/* a TLS 1.2 session: what resuming it by its ID takes */
+struct ot12_session {
+    unsigned char session_id[32];
+    unsigned char session_id_len;
+    uint16_t version;                        /* 0 until the handshake has its master secret */
+    uint16_t cipher_suite;
+    unsigned char master_secret[48];
+};
+
 struct OTSession {
-    br_ssl_session_parameters params;        /* TLS 1.2 and older */
+    struct ot12_session params;              /* TLS 1.2 */
     char host[OT_HOST_MAX + 1];
     struct ot13_ticket *t13;                 /* TLS 1.3: the newest ticket, or NULL */
     struct OTConnection *source;             /* still waiting for one from it */
@@ -243,7 +252,6 @@ void ot_session_unlock(void);
 enum { OTS_NEW, OTS_HANDSHAKE, OTS_OPEN, OTS_CLOSED, OTS_FAILED };
 
 struct OTConnection {
-    br_ssl_client_context cc;        /* first: BearSSL's engine */
     struct ot_x509 x509;
     struct ot_impls impls;
     struct OTContext *ctx;
@@ -266,7 +274,8 @@ struct OTConnection {
     int pinned;
     unsigned char pin[32];
     int offer_session;
-    br_ssl_session_parameters offered;
+    struct ot12_session offered;
+    struct ot12_session session12;   /* this connection's TLS 1.2 session */
     struct ot13_ticket *offer13;     /* a TLS 1.3 ticket to offer, or NULL */
     LONG min_version, max_version;   /* the context's, or OT_SetVersion's */
     struct ot13 *t13;                /* the TLS 1.3 client (ot_tls13.c), once started */

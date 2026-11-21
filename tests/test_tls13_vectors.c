@@ -292,6 +292,43 @@ static void test_cross(const struct ot_impls *a, const struct ot_impls *b)
     }
 }
 
+/* TLS 1.2 AES-CBC with HMAC: what one side seals the other opens, and a
+ * changed byte, a bad padding or a wrong MAC is refused */
+static void test_cbc12(const struct ot_impls *m)
+{
+    static const struct ot13_suite suites[] = {
+        { 0xC013, "ECDHE-RSA-AES128-SHA", 0, 16, &br_sha256_vtable, 32, &br_sha1_vtable, 20, 0, 0 },
+        { 0xC024, "ECDHE-ECDSA-AES256-SHA384", 0, 32, &br_sha384_vtable, 48, &br_sha384_vtable, 48, 0, 1 },
+    };
+    unsigned char mac[48], key[32], rec[5 + 300 + OT12_OVERHEAD], copy[sizeof rec];
+    size_t i, n, len, sizes[] = { 0, 1, 15, 16, 31, 200, 300 }, z;
+    for (i = 0; i < sizeof mac; ++i) mac[i] = (unsigned char)(i * 7 + 1);
+    for (i = 0; i < sizeof key; ++i) key[i] = (unsigned char)(i * 13 + 5);
+    for (n = 0; n < 2; ++n)
+        for (z = 0; z < sizeof sizes / sizeof sizes[0]; ++z) {
+            struct ot13_keys w, r;
+            size_t rl;
+            CHECK(ot12_keys_set(&w, &suites[n], m, mac, key, NULL, 1) == 0, "write keys");
+            CHECK(ot12_keys_set(&r, &suites[n], m, mac, key, NULL, 0) == 0, "read keys");
+            for (i = 0; i < sizes[z]; ++i) rec[5 + i] = (unsigned char)(i ^ 0x5A);
+            rl = ot12_seal(&w, rec, BR_SSL_APPLICATION_DATA, sizes[z]);
+            CHECK(rl > 5 + 16 + sizes[z] && (rl - 5 - 16) % 16 == 0, "sealed length");
+            memcpy(copy, rec, rl);
+            CHECK(ot12_open(&r, rec, rl, &len) == 0 && len == sizes[z], "opens");
+            for (i = 0; i < len; ++i)
+                if (rec[5 + i] != (unsigned char)(i ^ 0x5A)) break;
+            CHECK(i == len, "the content");
+            CHECK(ot12_open(&r, copy, rl, &len) == BR_ERR_BAD_MAC, "a replayed record (next sequence number)");
+            memcpy(rec, copy, rl);
+            rec[rl - 20] ^= 1;
+            r.seq = 0;
+            CHECK(ot12_open(&r, rec, rl, &len) == BR_ERR_BAD_MAC, "a changed byte");
+            memcpy(rec, copy, rl);
+            r.seq = 0;
+            CHECK(ot12_open(&r, rec, rl - 16, &len) != 0, "a block short");
+        }
+}
+
 int main(void)
 {
     struct ot_impls oc, bear;
@@ -309,6 +346,10 @@ int main(void)
     test_rfc8448_s5(&bear);
     test_cross(&oc, &bear);
     test_cross(&bear, &oc);
+    label = "TLS 1.2 AES-CBC, GFOpenCrypto";
+    test_cbc12(&oc);
+    label = "TLS 1.2 AES-CBC, BearSSL";
+    test_cbc12(&bear);
     printf("TLS 1.3 VECTORS %s (%d checks, %d failures)\n", failures ? "FAIL" : "PASS", checks, failures);
     return failures ? 1 : 0;
 }

@@ -72,7 +72,7 @@ target_include_directories(bearssl PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_part
 add_library(opentls STATIC
     src/opentls/ot_core.c src/opentls/ot_glue.c src/opentls/ot_platform.c
     src/opentls/ot_random.c src/opentls/ot_trust.c src/opentls/ot_x509.c
-    src/opentls/ot_tls13.c src/opentls/ot_tls13_keys.c src/opentls/ot_tls13_bridge.c
+    src/opentls/ot_tls13.c src/opentls/ot_tls13_keys.c
     src/opentls/ot_service.c)
 target_include_directories(opentls PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/host/include
                                           ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -126,12 +126,6 @@ if(Python3_FOUND)
     add_test(NAME opentls_local_servers
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tls_local.py
                      $<TARGET_FILE:opentls_client> $<TARGET_FILE:opentls_ftps_get>)
-    # the same with TLS 1.2 by BearSSL, as before our own TLS 1.2 (DESIGN.md section 15)
-    add_test(NAME opentls_local_servers_bearssl12
-             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tls_local.py
-                     $<TARGET_FILE:opentls_client> $<TARGET_FILE:opentls_ftps_get>)
-    set_tests_properties(opentls_local_servers_bearssl12 PROPERTIES
-                         ENVIRONMENT "OPENTLS_TEST_TLS12_BEARSSL=1;OPENTLS_TEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/tls-local-bearssl12")
     if(OPENSSL_FOUND)
         # the key work on the services card (DESIGN.md section 15, step 2)
         add_test(NAME opentls_local_servers_service
