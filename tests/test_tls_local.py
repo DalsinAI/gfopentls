@@ -244,7 +244,7 @@ def main():
 
     case("TLS 1.2, ECDSA chain (P-256 leaf, P-384 intermediate, RSA root)", Server("ecleaf", NO13),
          CA + get + ["--expect", "TLSv1.2"], {"result": "ok", "conn0.protocol": "0303"})
-    case("TLS 1.2 only in GFOpenTLS (BearSSL alone)", Server("ecleaf"),
+    case("TLS 1.2 only in GFOpenTLS", Server("ecleaf"),
          CA + get + ["--max", "12", "--expect", "TLSv1.2"], {"result": "ok", "conn0.protocol": "0303"})
     case("session resumption by session ID (3 connections)", Server("ecleaf", NO13),
          CA + ["--connections", "3"], {"result": "ok", "conn0.resumed": "0", "conn1.resumed": "1",
@@ -267,6 +267,26 @@ def main():
          {"result": "ok", "conn0.cipher": "ECDHE-ECDSA-AES256-SHA384"})
     case("AES-CBC with HMAC-SHA-1", Server("rsaleaf", NO13 + ["-cipher", "ECDHE-RSA-AES128-SHA"]), CA + get,
          {"result": "ok", "conn0.cipher": "ECDHE-RSA-AES128-SHA"})
+    # every TLS 1.2 suite offered, each with its resumption (DESIGN.md section 15, step 4)
+    for suite, leaf in (("ECDHE-ECDSA-CHACHA20-POLY1305", "ecleaf"), ("ECDHE-RSA-CHACHA20-POLY1305", "rsaleaf"),
+                        ("ECDHE-ECDSA-AES128-GCM-SHA256", "ecleaf"), ("ECDHE-RSA-AES128-GCM-SHA256", "rsaleaf"),
+                        ("ECDHE-ECDSA-AES256-GCM-SHA384", "ecleaf"), ("ECDHE-RSA-AES256-GCM-SHA384", "rsaleaf"),
+                        ("ECDHE-ECDSA-AES128-SHA256", "ecleaf"), ("ECDHE-RSA-AES128-SHA256", "rsaleaf"),
+                        ("ECDHE-ECDSA-AES256-SHA384", "ecleaf"), ("ECDHE-RSA-AES256-SHA384", "rsaleaf"),
+                        ("ECDHE-ECDSA-AES128-SHA", "ecleaf"), ("ECDHE-RSA-AES128-SHA", "rsaleaf"),
+                        ("ECDHE-ECDSA-AES256-SHA", "ecleaf"), ("ECDHE-RSA-AES256-SHA", "rsaleaf"),
+                        ("AES128-GCM-SHA256", "rsaleaf"), ("AES256-GCM-SHA384", "rsaleaf"),
+                        ("AES128-SHA256", "rsaleaf"), ("AES256-SHA256", "rsaleaf"),
+                        ("AES128-SHA", "rsaleaf"), ("AES256-SHA", "rsaleaf")):
+        case("TLS 1.2 " + suite, Server(leaf, NO13 + ["-cipher", suite]), CA + get + ["--connections", "2"],
+             {"result": "ok", "conn0.cipher": suite, "conn1.cipher": suite, "conn1.resumed": "1"})
+    case("TLS 1.2 AES-CBC, 1 MB download", Server("rsaleaf", NO13 + ["-cipher", "ECDHE-RSA-AES256-SHA384"], www="-WWW"),
+         CA + ["--send", "GET /big.bin HTTP/1.0\\r\\n\\r\\n"],
+         {"result": "ok", "conn0.received": str((1 << 20) + len(WWW_HEADER))})
+    case("TLS 1.1 server: refused", Server("ecleaf", ["-tls1_1", "-cipher", "ALL:@SECLEVEL=0"]), CA,
+         {"result": "fail", "conn0.error": "-7"})
+    case("OT_SetVersion: TLS 1.1 at most is gone", Server("ecleaf"), CA + ["--version", "10,11"],
+         {"result": "fail", "conn0.setversion": "-17"})
     for group in ("X25519", "P-256", "P-384", "P-521"):
         case("TLS 1.2 ECDHE on " + group, Server("ecleaf", NO13 + ["-groups", group]), CA + get,
              {"result": "ok", "conn0.protocol": "0303"})

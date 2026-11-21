@@ -574,3 +574,27 @@ own port, so connections on several tasks wait for their own answers.
   hash types, and the TLS 1.2 engine for the suites that are not ours yet
   (step 4).
 
+**Step 4, done in 2.0 (21 November 2026).** BearSSL is gone from the library.
+- **The TLS engine.** Our client makes every ClientHello and runs every
+  connection. TLS 1.2 gained AES-CBC with HMAC-SHA1, SHA-256 and SHA-384,
+  with a fresh IV a record. Coming in, the padding is checked over the
+  last 256 bytes whatever its value, and the bytes past the MAC are
+  hashed too, so a bad padding costs about what a good one does (Lucky
+  Thirteen). It also gained RSA key exchange. A range that stops at 1.2
+  sends a ClientHello with no TLS 1.3 parts. TLS 1.2 sessions are our
+  own struct.
+- **TLS 1.0 and 1.1 are dropped.** A minimum below 1.2 is raised. A
+  maximum below 1.2 is `OTERR_UNSUPPORTED`. A server that wants 1.1 or
+  older gets protocol_version.
+- **The rest.** HMAC and HMAC-DRBG (`ot_hmac.c`), the PEM reader and the
+  anchors (`ot_trust.c`, through `ot_cert_anchor`), PKCS #1 v1.5
+  unpadding and ECDSA's DER reader (`ot_glue.c`) are ours. The shared
+  types are in `ot_types.h`, in BearSSL's shapes and under our names.
+- **What remains.** `third_party/bearssl` stays, but only the unit tests
+  link it, as the reference our primitives are held to. The Amiga build
+  no longer compiles it.
+- **Tests:** all 20 TLS 1.2 suites with resumption, a 1 MB AES-CBC
+  download, a TLS 1.1 server and a 1.1 range refused, and AES-CBC seal and
+  open (changed byte, replay, short record). On daletop, 11 real sites
+  pass over TLS 1.3 and 1.2, and badssl.com's bad certificates are refused.
+

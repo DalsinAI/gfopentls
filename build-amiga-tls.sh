@@ -26,7 +26,6 @@ P="$STOVE/prefix"
 CC=${CC:-"$P/bin/m68k-amigaos-gcc"}
 AR="$P/bin/m68k-amigaos-ar"
 OUT=${OUT:-"$HERE/build-amiga-tls"}
-BR="$HERE/third_party/bearssl"
 case "${CPU:-040}" in
     040) CPUFLAGS="-m68040 -specs=$SPECS" ;;
     060) CPUFLAGS="-m68060" ;;
@@ -42,64 +41,28 @@ if [ "${CPU:-040}" = 060 ] && "$CC" -dumpversion | grep -q '^16' && ! gcc16_060_
     echo "Use a stove with GFOpenAmigaGCC patch 0008, the os32 stove (GCC 6.5), or CPU=040."
     exit 2
 fi
-mkdir -p "$OUT/lib" "$OUT/tests" "$OUT/obj/bearssl" "$OUT/include"
+mkdir -p "$OUT/lib" "$OUT/tests" "$OUT/include"
 cp -r "$HERE/include/libraries" "$HERE/include/proto" "$HERE/include/inline" \
       "$HERE/include/clib" "$HERE/include/fd" "$OUT/include/"
 
 # -fno-tree-loop-distribute-patterns: GCC 16.2.0b's loop-shift miscompile
 # -fno-delete-null-pointer-checks: address 0 is memory on an Amiga
 BASE="$CPUFLAGS -O2 -fno-tree-loop-distribute-patterns -fno-delete-null-pointer-checks -fomit-frame-pointer ${EXTRA_CFLAGS:-}"
-# BearSSL's build-time choices for the 68k: no OS random or clock (GFOpenTLS
-# gives both), no x86/POWER code, 32-bit words
-BRDEFS="-DBR_USE_UNIX_TIME=0 -DBR_USE_WIN32_TIME=0 -DBR_USE_URANDOM=0 -DBR_USE_WIN32_RAND=0 \
- -DBR_RDRAND=0 -DBR_AES_X86NI=0 -DBR_SSE2=0 -DBR_POWER8=0 -DBR_INT128=0 -DBR_UMUL128=0 -DBR_64=0 \
- -DBR_LE_UNALIGNED=0 -DBR_BE_UNALIGNED=0"
-INC="-I$HERE/include -I$BR/inc -I$BR/src -I$HERE/src/opentls"
-
-# BearSSL, as an archive: the link takes only what the client uses.
-# Compiled eight at a time; any compile that fails fails the build.
-PIDS=""
-OBJS=""
-FAILED=0
-for f in "$BR"/src/*/*.c; do
-    o="$OUT/obj/bearssl/$(basename "$(dirname "$f")")_$(basename "$f" .c).o"
-    OBJS="$OBJS $o"
-    "$CC" $BASE $BRDEFS -mcrt=nix20 -I"$BR/inc" -I"$BR/src" -c "$f" -o "$o" &
-    PIDS="$PIDS $!"
-    set -- $PIDS
-    if [ $# -ge 8 ]; then
-        wait "$1" || FAILED=1
-        shift
-        PIDS="$*"
-    fi
-done
-for p in $PIDS; do wait "$p" || FAILED=1; done
-[ "$FAILED" = 0 ] || { echo "BearSSL did not compile"; exit 1; }
-"$AR" rcs "$OUT/lib/libbearssl68k.a.new" $OBJS
-mv -f "$OUT/lib/libbearssl68k.a.new" "$OUT/lib/libbearssl68k.a"
+INC="-I$HERE/include -I$HERE/src/opentls"
 
 OTSRC="$HERE/src/opentls/ot_core.c $HERE/src/opentls/ot_glue.c $HERE/src/opentls/ot_platform.c
        $HERE/src/opentls/ot_random.c $HERE/src/opentls/ot_trust.c $HERE/src/opentls/ot_x509.c
-       $HERE/src/opentls/ot_tls13.c $HERE/src/opentls/ot_tls13_keys.c $HERE/src/opentls/ot_tls13_bridge.c
-       $HERE/src/opentls/ot_service.c
+       $HERE/src/opentls/ot_tls13.c $HERE/src/opentls/ot_tls13_keys.c
+       $HERE/src/opentls/ot_service.c $HERE/src/opentls/ot_hmac.c
        $HERE/src/opencrypto_pss.c"
 WARN="-Wall -Wextra -Werror -Wno-unused-parameter"
 
-"$CC" $BASE $BRDEFS $WARN $INC -mcrt=nix20 -fno-toplevel-reorder -nostartfiles \
+"$CC" $BASE $WARN $INC -mcrt=nix20 -fno-toplevel-reorder -nostartfiles \
   -o "$OUT/lib/gfopentls.library" \
-  "$HERE/library/opentls_lib.c" $OTSRC -L"$OUT/lib" -lbearssl68k -lamiga -lgcc \
+  "$HERE/library/opentls_lib.c" $OTSRC -lamiga -lgcc \
   -Wl,-Map,"$OUT/lib/gfopentls.library.map"
 echo "$OUT/lib/gfopentls.library ($(wc -c < "$OUT/lib/gfopentls.library") bytes)"
-# All the maths is gfopencrypto.library's (src/opentls/ot_glue.c): no
-# BearSSL hash, cipher, curve, RSA or big-number code may be linked. The
-# two kept are encodings: ECDSA's ASN.1 and PKCS #1's signature padding.
-BRCRYPTO=$(grep -o 'libbearssl68k\.a([a-z0-9_]*\.o)' "$OUT/lib/gfopentls.library.map" | sort -u \
-    | grep -E '\((hash_(md5|sha|ghash|dig|mgf)|symcipher_|aead_|ec_|rsa_|int_|mac_|kdf_)' \
-    | grep -vE '\((ec_ecdsa_atr|rsa_rsa_pkcs1_sig_unpad|mac_hmac|mac_hmac_ct)\.o' || true)
-if [ -n "$BRCRYPTO" ]; then
-    echo "BearSSL crypto linked into gfopentls.library: $BRCRYPTO"
-    exit 1
-fi
+# 2.0: no BearSSL at all. The library's undefined symbols must all be libnix's or libamiga's.
 "$P/bin/m68k-amigaos-nm" -u "$OUT/lib/gfopentls.library"
 
 "$CC" $BASE $WARN -Wno-format -I"$HERE/include" -noixemul -o "$OUT/tests/GFOpenTLSClient" \

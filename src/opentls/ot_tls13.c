@@ -1,10 +1,9 @@
-/* GFOpenTLS: the TLS 1.3 client, written from RFC 8446.
+/* GFOpenTLS: the TLS client, written from RFC 8446 (TLS 1.3) and RFC 5246
+ * (TLS 1.2, with RFC 8422's ECDHE, 5288's AES-GCM and 7905's
+ * ChaCha20-Poly1305).
  *
- * One ClientHello offers TLS 1.3 and, when the caller's range allows, TLS
- * 1.0 to 1.2 as well. If the server answers with TLS 1.3, this file does
- * the rest of the connection; if it answers with TLS 1.2 or older,
- * ot_tls13_bridge.c hands the same connection to BearSSL, which was set up
- * as usual and believes it sent that ClientHello itself.
+ * One ClientHello offers what the caller's range allows, TLS 1.3, TLS 1.2
+ * or both, and this file does the rest of the connection in either.
  *
  * What is supported: X25519 (the key share sent at once) and P-256 (after
  * a HelloRetryRequest), the three cipher suites, certificates with ECDSA
@@ -13,11 +12,10 @@
  * the middlebox compatibility mode (RFC 8446 appendix D.4). No 0-RTT, no
  * client certificates (a CertificateRequest gets an empty Certificate).
  *
- * Buffers: until the ServerHello, records come into the connection's
- * BearSSL buffer (BearSSL is waiting for the ServerHello and holds
- * nothing) and leave from the gathering buffer. Once TLS 1.3 is chosen
- * BearSSL is not used again, so its buffer holds the record being read and,
- * when large enough (not OTCF_SMALL_BUFFERS), the records being written.
+ * Buffers: records come into the connection's buffer and, until the
+ * handshake keys are on, leave from the small gathering buffer. After
+ * that, when the buffer is large (not OTCF_SMALL_BUFFERS), its second half
+ * holds the records being written.
  *
  * MIT licensed and free. Copyright (c) 2026 The AmiCradle Team. */
 #include "ot_tls13.h"
@@ -95,31 +93,39 @@ static const uint16_t suites13[] = {
     OT13_CHACHA20_POLY1305_SHA256, OT13_AES_128_GCM_SHA256, OT13_AES_256_GCM_SHA384
 };
 
-/* TLS 1.2 suites our own client runs (DESIGN.md section 15): ECDHE with
- * AES-GCM or ChaCha20-Poly1305. A server that picks another of BearSSL's
- * suites goes to BearSSL as before (ot_tls13_bridge.c). The shape is TLS
- * 1.3's: hash is the PRF's and the transcript's. */
+/* the TLS 1.2 suites, in the order offered (DESIGN.md section 15). The
+ * shape is TLS 1.3's: hash is the PRF's and the transcript's. */
 static const struct ot13_suite suites12[] = {
-    { 0xCCA9, "ECDHE-ECDSA-CHACHA20-POLY1305", 1, 32, &br_sha256_vtable, 32 },
-    { 0xCCA8, "ECDHE-RSA-CHACHA20-POLY1305", 1, 32, &br_sha256_vtable, 32 },
-    { 0xC02B, "ECDHE-ECDSA-AES128-GCM-SHA256", 0, 16, &br_sha256_vtable, 32 },
-    { 0xC02F, "ECDHE-RSA-AES128-GCM-SHA256", 0, 16, &br_sha256_vtable, 32 },
-    { 0xC02C, "ECDHE-ECDSA-AES256-GCM-SHA384", 0, 32, &br_sha384_vtable, 48 },
-    { 0xC030, "ECDHE-RSA-AES256-GCM-SHA384", 0, 32, &br_sha384_vtable, 48 }
+    { 0xCCA9, "ECDHE-ECDSA-CHACHA20-POLY1305", 1, 32, &ot_sha256_vtable, 32, NULL, 0, 0, 1 },
+    { 0xCCA8, "ECDHE-RSA-CHACHA20-POLY1305", 1, 32, &ot_sha256_vtable, 32, NULL, 0, 0, 0 },
+    { 0xC02B, "ECDHE-ECDSA-AES128-GCM-SHA256", 0, 16, &ot_sha256_vtable, 32, NULL, 0, 0, 1 },
+    { 0xC02F, "ECDHE-RSA-AES128-GCM-SHA256", 0, 16, &ot_sha256_vtable, 32, NULL, 0, 0, 0 },
+    { 0xC02C, "ECDHE-ECDSA-AES256-GCM-SHA384", 0, 32, &ot_sha384_vtable, 48, NULL, 0, 0, 1 },
+    { 0xC030, "ECDHE-RSA-AES256-GCM-SHA384", 0, 32, &ot_sha384_vtable, 48, NULL, 0, 0, 0 },
+    { 0xC023, "ECDHE-ECDSA-AES128-SHA256", 0, 16, &ot_sha256_vtable, 32, &ot_sha256_vtable, 32, 0, 1 },
+    { 0xC027, "ECDHE-RSA-AES128-SHA256", 0, 16, &ot_sha256_vtable, 32, &ot_sha256_vtable, 32, 0, 0 },
+    { 0xC024, "ECDHE-ECDSA-AES256-SHA384", 0, 32, &ot_sha384_vtable, 48, &ot_sha384_vtable, 48, 0, 1 },
+    { 0xC028, "ECDHE-RSA-AES256-SHA384", 0, 32, &ot_sha384_vtable, 48, &ot_sha384_vtable, 48, 0, 0 },
+    { 0xC009, "ECDHE-ECDSA-AES128-SHA", 0, 16, &ot_sha256_vtable, 32, &ot_sha1_vtable, 20, 0, 1 },
+    { 0xC013, "ECDHE-RSA-AES128-SHA", 0, 16, &ot_sha256_vtable, 32, &ot_sha1_vtable, 20, 0, 0 },
+    { 0xC00A, "ECDHE-ECDSA-AES256-SHA", 0, 32, &ot_sha256_vtable, 32, &ot_sha1_vtable, 20, 0, 1 },
+    { 0xC014, "ECDHE-RSA-AES256-SHA", 0, 32, &ot_sha256_vtable, 32, &ot_sha1_vtable, 20, 0, 0 },
+    { 0x009C, "AES128-GCM-SHA256", 0, 16, &ot_sha256_vtable, 32, NULL, 0, 1, 0 },
+    { 0x009D, "AES256-GCM-SHA384", 0, 32, &ot_sha384_vtable, 48, NULL, 0, 1, 0 },
+    { 0x003C, "AES128-SHA256", 0, 16, &ot_sha256_vtable, 32, &ot_sha256_vtable, 32, 1, 0 },
+    { 0x003D, "AES256-SHA256", 0, 32, &ot_sha256_vtable, 32, &ot_sha256_vtable, 32, 1, 0 },
+    { 0x002F, "AES128-SHA", 0, 16, &ot_sha256_vtable, 32, &ot_sha1_vtable, 20, 1, 0 },
+    { 0x0035, "AES256-SHA", 0, 32, &ot_sha256_vtable, 32, &ot_sha1_vtable, 20, 1, 0 }
 };
+#define SUITES12_COUNT (sizeof suites12 / sizeof suites12[0])
 
 static const struct ot13_suite *suite12(unsigned id)
 {
     size_t i;
-    for (i = 0; i < sizeof suites12 / sizeof suites12[0]; ++i)
+    for (i = 0; i < SUITES12_COUNT; ++i)
         if (suites12[i].id == id) return &suites12[i];
     return NULL;
 }
-
-/* ECDSA (else RSA) authenticates the suite */
-static int suite12_ecdsa(unsigned id) { return id == 0xCCA9 || id == 0xC02B || id == 0xC02C; }
-
-static int ot12_off(void) { return ot_tls12_bearssl(); }
 
 struct OTConnection;
 static LONG t12_server_hello(struct OTConnection *c, const unsigned char *msg, size_t mlen);
@@ -146,9 +152,9 @@ static int ct_equal(const unsigned char *a, const unsigned char *b, size_t n)
     return d == 0;
 }
 
-static size_t hlen_of(const br_hash_class *h)
+static size_t hlen_of(const ot_hash_class *h)
 {
-    return (h->desc >> BR_HASHDESC_OUT_OFF) & BR_HASHDESC_OUT_MASK;
+    return (h->desc >> OT_HASHDESC_OUT_OFF) & OT_HASHDESC_OUT_MASK;
 }
 
 /* the services card may have this connection's key work: OTCF_NO_OFFLOAD keeps it here */
@@ -165,7 +171,7 @@ static int svc_on(const struct OTConnection *c)
  * @param data                          the hash, or the whole message for Ed25519
  * @return                              1 good, 0 bad, -1 not done (check it here)
  */
-static int svc_check(struct OTConnection *c, ULONG alg, const br_hash_class *hc,
+static int svc_check(struct OTConnection *c, ULONG alg, const ot_hash_class *hc,
                      const unsigned char *data, size_t dlen, const unsigned char *sig, size_t siglen)
 {
     static const ULONG digests[] = { 0, OTK_SHA1, OTK_SHA256, OTK_SHA384, OTK_SHA512 };
@@ -214,15 +220,15 @@ static struct rd rdsub(struct rd *r, size_t len)
 
 static void th_update(struct ot13 *t, const void *data, size_t len)
 {
-    if (!t->hash || t->hash == &br_sha256_vtable) br_sha256_update(&t->th256, data, len);
-    if (!t->hash || t->hash == &br_sha384_vtable) br_sha384_update(&t->th384, data, len);
+    if (!t->hash || t->hash == &ot_sha256_vtable) ot_sha256_update(&t->th256, data, len);
+    if (!t->hash || t->hash == &ot_sha384_vtable) ot_sha384_update(&t->th384, data, len);
 }
 
 /* the hash of the messages so far, in h (the suite's, or a PSK's) */
-static void th_out(struct ot13 *t, const br_hash_class *h, unsigned char *out)
+static void th_out(struct ot13 *t, const ot_hash_class *h, unsigned char *out)
 {
-    if (h == &br_sha384_vtable) br_sha384_out(&t->th384, out);
-    else br_sha256_out(&t->th256, out);
+    if (h == &ot_sha384_vtable) ot_sha384_out(&t->th384, out);
+    else ot_sha256_out(&t->th256, out);
 }
 
 /* ---- errors and alerts ---- */
@@ -266,7 +272,7 @@ static LONG tx_flush(struct OTConnection *c)
 static unsigned char *tx_room(struct ot13 *t, size_t len)
 {
     if (t->tx_sent == t->tx_len) t->tx_len = t->tx_sent = 0;
-    if (t->tx_len + 5 + len + 8 + 16 > t->tx_cap) return NULL;    /* TLS 1.2's explicit nonce, or 1.3's type */
+    if (t->tx_len + 5 + len + OT12_OVERHEAD > t->tx_cap) return NULL;  /* TLS 1.2's IV, MAC, padding, or 1.3's type and tag */
     return t->tx + t->tx_len;
 }
 
@@ -296,7 +302,7 @@ static void queue_alert(struct OTConnection *c, int level, int desc)
     }
     rec[5] = (unsigned char)level;
     rec[6] = (unsigned char)desc;
-    tx_record(t, rec, BR_SSL_ALERT, 2);
+    tx_record(t, rec, OT_SSL_ALERT, 2);
     if (desc == ALERT_CLOSE_NOTIFY || level == 2) t->close_sent = 1;
 }
 
@@ -305,7 +311,7 @@ static void queue_ccs(struct ot13 *t)
 {
     unsigned char *rec;
     if (t->ccs_sent || !(rec = tx_room(t, 1))) return;
-    rec[0] = BR_SSL_CHANGE_CIPHER_SPEC;
+    rec[0] = OT_SSL_CHANGE_CIPHER_SPEC;
     rec[1] = 3;
     rec[2] = 3;
     put16(rec + 3, 1);
@@ -324,7 +330,7 @@ static LONG make_x25519(struct OTConnection *c, unsigned char *pub)
     t->x25519[0] &= 0xF8;
     t->x25519[31] &= 0x7F;
     t->x25519[31] |= 0x40;
-    if (c->impls.ec->mulgen(pub, t->x25519, 32, BR_EC_curve25519) != 32) return OTERR_INTERNAL;
+    if (c->impls.ec->mulgen(pub, t->x25519, 32, OT_EC_curve25519) != 32) return OTERR_INTERNAL;
     return OTERR_OK;
 }
 
@@ -337,14 +343,14 @@ static LONG make_p256(struct OTConnection *c, unsigned char *pub)
     do {        /* 0 < k < n; the first draw is almost always right */
         int below = 0, zero = 1;
         if (ot_random(t->p256, 32) != OTERR_OK) return OTERR_RANDOM;
-        order = c->impls.ec->order(BR_EC_secp256r1, &olen);
+        order = c->impls.ec->order(OT_EC_secp256r1, &olen);
         for (i = 0; i < 32; ++i) {
             if (t->p256[i]) zero = 0;
             if (t->p256[i] != order[i]) { below = t->p256[i] < order[i]; break; }
         }
         if (below && !zero) break;
     } while (1);
-    if (c->impls.ec->mulgen(pub, t->p256, 32, BR_EC_secp256r1) != 65) return OTERR_INTERNAL;
+    if (c->impls.ec->mulgen(pub, t->p256, 32, OT_EC_secp256r1) != 65) return OTERR_INTERNAL;
     return OTERR_OK;
 }
 
@@ -355,7 +361,7 @@ static size_t make_ec(struct OTConnection *c, int curve, unsigned char *pub)
     struct ot13 *t = c->t13;
     const unsigned char *order;
     size_t olen, i;
-    if (curve == BR_EC_secp384r1 && svc_on(c) && ot_svc_keygen(OTK_P384, t->ecpriv, 48, pub, 97) == 97) {
+    if (curve == OT_EC_secp384r1 && svc_on(c) && ot_svc_keygen(OTK_P384, t->ecpriv, 48, pub, 97) == 97) {
         t->ecpriv_len = 48;
         return 97;
     }
@@ -388,7 +394,7 @@ static size_t ecdhe(struct OTConnection *c, unsigned group, const unsigned char 
         if (len != 32) return 0;
         memcpy(g, share, 32);
         if ((!svc_on(c) || ot_svc_derive(OTK_X25519, t->x25519, 32, share, 32, g, 32) != 32)
-            && !c->impls.ec->mul(g, 32, t->x25519, 32, BR_EC_curve25519)) return 0;
+            && !c->impls.ec->mul(g, 32, t->x25519, 32, OT_EC_curve25519)) return 0;
         for (i = 0; i < 32; ++i) acc |= g[i];
         if (!acc) return 0;             /* a small-order point */
         memcpy(out, g, 32);
@@ -396,10 +402,10 @@ static size_t ecdhe(struct OTConnection *c, unsigned group, const unsigned char 
     }
     if (group == GROUP_P384 || group == GROUP_P521) {
         unsigned char gg[133];
-        int curve = group == GROUP_P384 ? BR_EC_secp384r1 : BR_EC_secp521r1;
+        int curve = group == GROUP_P384 ? OT_EC_secp384r1 : OT_EC_secp521r1;
         size_t plen = group == GROUP_P384 ? 97 : 133;
         if (len != plen || share[0] != 4 || !t->ecpriv_len) return 0;
-        if (curve == BR_EC_secp384r1 && svc_on(c)
+        if (curve == OT_EC_secp384r1 && svc_on(c)
             && ot_svc_derive(OTK_P384, t->ecpriv, t->ecpriv_len, share, plen, out, 48) == 48)
             return 48;
         memcpy(gg, share, plen);
@@ -412,8 +418,8 @@ static size_t ecdhe(struct OTConnection *c, unsigned group, const unsigned char 
     if (len != 65 || share[0] != 4) return 0;
     if (svc_on(c) && ot_svc_derive(OTK_P256, t->p256, 32, share, 65, out, 32) == 32) return 32;
     memcpy(g, share, 65);
-    if (!c->impls.ec->mul(g, 65, t->p256, 32, BR_EC_secp256r1)) return 0;
-    xoff = c->impls.ec->xoff(BR_EC_secp256r1, &xlen);
+    if (!c->impls.ec->mul(g, 65, t->p256, 32, OT_EC_secp256r1)) return 0;
+    xoff = c->impls.ec->xoff(OT_EC_secp256r1, &xlen);
     memcpy(out, g + xoff, xlen);
     return xlen;
 }
@@ -446,11 +452,11 @@ static LONG build_client_hello(struct OTConnection *c)
     uint32_t age = 0;
     size_t i, hl;
     LONG rc;
-    int v, minv = (int)c->min_version, k;
+    int k, v13 = ot13_wanted(c);
     /* what it can take at most, without the ticket: it must fit (a long
      * cookie from the server may not), and the ticket is left out when
      * it would not */
-    size_t most = 5 + 4 + 2 + 32 + 1 + 32 + 2 + 2 * (3 + ot_suites12_count) + 2 + 2
+    size_t most = 5 + 4 + 2 + 32 + 1 + 32 + 2 + 2 * (3 + SUITES12_COUNT) + 2 + 2
                 + 9 + strlen(c->host) + 5 + 8 + 14 + 6 + 6 + 2 * 12 + 6 + 5 + 10 + 65 + 6
                 + (t->cookie ? 6 + t->cookie_len : 0) + 22;
 
@@ -465,13 +471,14 @@ static LONG build_client_hello(struct OTConnection *c)
     memcpy(p, t->random, 32); p += 32;
     *p++ = (unsigned char)t->sid_len;
     memcpy(p, t->sid, t->sid_len); p += t->sid_len;
-    /* cipher suites: ours, then TLS 1.2's (BearSSL's list) */
+    /* cipher suites: TLS 1.3's, then TLS 1.2's */
     {
-        size_t n = sizeof suites13 / sizeof suites13[0] + (t->offer12 ? ot_suites12_count : 0);
+        size_t n = (v13 ? sizeof suites13 / sizeof suites13[0] : 0) + (t->offer12 ? SUITES12_COUNT : 0);
         put16(p, 2 * n); p += 2;
-        for (i = 0; i < sizeof suites13 / sizeof suites13[0]; ++i) { put16(p, suites13[i]); p += 2; }
+        if (v13)
+            for (i = 0; i < sizeof suites13 / sizeof suites13[0]; ++i) { put16(p, suites13[i]); p += 2; }
         if (t->offer12)
-            for (i = 0; i < ot_suites12_count; ++i) { put16(p, ot_suites12[i]); p += 2; }
+            for (i = 0; i < SUITES12_COUNT; ++i) { put16(p, suites12[i].id); p += 2; }
     }
     *p++ = 1; *p++ = 0;                         /* compression: none */
     ext = p;
@@ -483,14 +490,12 @@ static LONG build_client_hello(struct OTConnection *c)
         memcpy(p + 9, c->host, hl2);
         p += 9 + hl2;
     }
-    /* supported_versions: 1.3, then what TLS 1.2 down to the minimum allows */
-    {
+    if (v13) {                                  /* supported_versions: 1.3, and 1.2 when allowed */
         unsigned char *l = p + 4;
         put16(p, EXT_VERSIONS);
         p += 5;
         put16(p, OT_TLS13); p += 2;
-        if (t->offer12)
-            for (v = OT_TLS12; v >= minv && v >= OT_TLS10; --v) { put16(p, (size_t)v); p += 2; }
+        if (t->offer12) { put16(p, OT_TLS12); p += 2; }
         *l = (unsigned char)(p - l - 1);
         put16(l - 2, (size_t)(p - l));
     }
@@ -509,7 +514,7 @@ static LONG build_client_hello(struct OTConnection *c)
         put16(p, EXT_SIGALGS);
         p += 6;
         for (i = 0; i < sizeof sigalgs / sizeof sigalgs[0]; ++i) {
-            if (sigalgs[i] == 0x0807 && !t->sigalgs_ed25519) continue;
+            if (sigalgs[i] == 0x0807 && (!t->sigalgs_ed25519 || !v13)) continue;
             put16(p, sigalgs[i]); p += 2;
         }
         put16(l, (size_t)(p - l - 2));
@@ -532,7 +537,7 @@ static LONG build_client_hello(struct OTConnection *c)
         put16(p, EXT_RENEGOTIATION); put16(p + 2, 1); p[4] = 0;
         p += 5;
     }
-    {                                           /* key_share: one share */
+    if (v13) {                                  /* key_share: one share */
         size_t kl = t->group == GROUP_X25519 ? 32 : 65;
         put16(p, EXT_KEY_SHARE); put16(p + 2, kl + 6); put16(p + 4, kl + 4);
         put16(p + 6, t->group); put16(p + 8, kl);
@@ -540,15 +545,17 @@ static LONG build_client_hello(struct OTConnection *c)
         if (rc != OTERR_OK) return rc;
         p += 10 + kl;
     }
-    put16(p, EXT_PSK_MODES); put16(p + 2, 2); p[4] = 1; p[5] = 1;   /* psk_dhe_ke */
-    p += 6;
+    if (v13) {
+        put16(p, EXT_PSK_MODES); put16(p + 2, 2); p[4] = 1; p[5] = 1;   /* psk_dhe_ke */
+        p += 6;
+    }
     if (t->cookie) {
         put16(p, EXT_COOKIE); put16(p + 2, t->cookie_len + 2); put16(p + 4, t->cookie_len);
         memcpy(p + 6, t->cookie, t->cookie_len);
         p += 6 + t->cookie_len;
     }
     /* pre_shared_key, last: a ticket whose hash suits the HelloRetryRequest's suite */
-    if (offer_ticket(c, &age) && most + 8 + c->offer13->len + 4 + 3 + OT13_HASH_MAX <= t->tx_cap) {
+    if (v13 && offer_ticket(c, &age) && most + 8 + c->offer13->len + 4 + 3 + OT13_HASH_MAX <= t->tx_cap) {
         ps = ot13_suite(c->offer13->suite);
         if (t->hrr && ps->hash != t->hash) ps = NULL;
     }
@@ -573,16 +580,16 @@ static LONG build_client_hello(struct OTConnection *c)
     if (ps) {
         /* the binder: HMAC over the transcript up to the identities */
         unsigned char early[OT13_HASH_MAX], bkey[OT13_HASH_MAX], th[OT13_HASH_MAX];
-        br_sha256_context s256 = t->th256;
-        br_sha384_context s384 = t->th384;
+        ot_sha256_context s256 = t->th256;
+        ot_sha384_context s384 = t->th384;
         ot13_extract(ps->hash, NULL, c->offer13->psk, ps->hash_len, early);
         ot13_derive(ps->hash, early, "res binder", NULL, bkey);
-        if (ps->hash == &br_sha384_vtable) {
-            br_sha384_update(&s384, m, (size_t)(binders - m));
-            br_sha384_out(&s384, th);
+        if (ps->hash == &ot_sha384_vtable) {
+            ot_sha384_update(&s384, m, (size_t)(binders - m));
+            ot_sha384_out(&s384, th);
         } else {
-            br_sha256_update(&s256, m, (size_t)(binders - m));
-            br_sha256_out(&s256, th);
+            ot_sha256_update(&s256, m, (size_t)(binders - m));
+            ot_sha256_out(&s256, th);
         }
         ot13_finished(ps->hash, bkey, th, binders + 3);
         memset(early, 0, sizeof early);
@@ -591,16 +598,11 @@ static LONG build_client_hello(struct OTConnection *c)
     } else {
         t->offer = NULL;
     }
-    rec[0] = BR_SSL_HANDSHAKE;
+    rec[0] = OT_SSL_HANDSHAKE;
     rec[1] = 3;
     rec[2] = t->hrr ? 3 : 1;                    /* the first one says TLS 1.0, as is usual */
     put16(rec + 3, (size_t)(p - m));
     th_update(t, m, (size_t)(p - m));
-    if (t->offer12 && !t->hrr) {
-        /* BearSSL hashed the ClientHello it made; it must hash this one */
-        br_multihash_init(&c->cc.eng.mhash);
-        br_multihash_update(&c->cc.eng.mhash, m, (size_t)(p - m));
-    }
     t->tx_len = (size_t)(p - rec);
     return (LONG)t->tx_len;
 }
@@ -614,13 +616,12 @@ int ot13_wanted(struct OTConnection *c)
 
 int ot13_active(struct OTConnection *c)
 {
-    return c->t13 && c->t13->st != T13_BRIDGE && c->t13->st >= T13_WAIT_EE;
+    return c->t13 && c->t13->st == T13_OPEN;
 }
 
 LONG ot13_start(struct OTConnection *c)
 {
     struct ot13 *t = ot_alloc(sizeof *t);
-    br_ssl_engine_context *e = &c->cc.eng;
     LONG rc;
     if (!t) return ot_fail(c, OTERR_NOMEM, 0, "Out of memory.", NULL, NULL);
     c->t13 = t;
@@ -628,28 +629,21 @@ LONG ot13_start(struct OTConnection *c)
     t->group = GROUP_X25519;
     t->sigalgs_ed25519 = ot_glue_has_ed25519();
     t->update_after = ot_key_update_after();
-    br_sha256_init(&t->th256);
-    br_sha384_init(&t->th384);
+    ot_sha256_init(&t->th256);
+    ot_sha384_init(&t->th384);
     t->rx = c->iobuf;
     t->tx = c->out;
     t->tx_cap = OT_OUT_MAX;
-    if (t->offer12) {
-        /* BearSSL made its ClientHello: keep its random and session ID
-         * (a TLS 1.2 session offered) and drop the message */
-        size_t len;
-        memcpy(t->random, e->client_random, 32);
-        t->sid_len = e->session.session_id_len;
-        memcpy(t->sid, e->session.session_id, t->sid_len);
-        while (br_ssl_engine_current_state(e) & BR_SSL_SENDREC) {
-            br_ssl_engine_sendrec_buf(e, &len);
-            br_ssl_engine_sendrec_ack(e, len);
-        }
-        if (!(br_ssl_engine_current_state(e) & BR_SSL_RECVREC))
-            return ot_engine_error(c, br_ssl_engine_last_error(e));
-    } else if (ot_random(t->random, 32) != OTERR_OK) {
+    if (ot_random(t->random, 32) != OTERR_OK)
         return ot_fail(c, OTERR_RANDOM, 0, "No random numbers for the handshake.", NULL, NULL);
+    memset(&c->session12, 0, sizeof c->session12);
+    if (t->offer12 && c->offer_session && c->offered.session_id_len) {
+        /* a TLS 1.2 session offered: its ID, kept to see whether it is resumed */
+        c->session12 = c->offered;
+        t->sid_len = c->offered.session_id_len;
+        memcpy(t->sid, c->offered.session_id, t->sid_len);
     }
-    if (!t->sid_len) {            /* compatibility mode: a session ID of our own */
+    if (!t->sid_len && ot13_wanted(c)) {   /* compatibility mode: a session ID of our own */
         if (ot_random(t->sid, 32) != OTERR_OK)
             return ot_fail(c, OTERR_RANDOM, 0, "No random numbers for the handshake.", NULL, NULL);
         t->sid_len = 32;
@@ -674,7 +668,7 @@ static LONG read_record(struct OTConnection *c)
         LONG n;
         if (t->rx_have >= 5) {
             size_t len = get16(t->rx + 3);
-            if (t->rx[1] != 3 || len > (t->rd_on ? 16384 + 256 : 16384) || len == 0)
+            if (t->rx[1] != 3 || len > (t->rd_on ? OT13_RX_MAX - 5 : 16384) || len == 0)
                 return abort13(c, len ? ALERT_RECORD_OVERFLOW : ALERT_DECODE_ERROR, OTERR_PROTOCOL,
                                "a malformed record");
             need = 5 + len;
@@ -700,7 +694,7 @@ static LONG open_record(struct OTConnection *c)
     int type = t->rx[0];
     t->rx_have = 0;           /* the next read starts a new record */
     if (t->v12) {
-        if (type == BR_SSL_CHANGE_CIPHER_SPEC) {
+        if (type == OT_SSL_CHANGE_CIPHER_SPEC) {
             if (len != 1 || t->rx[5] != 1 || t->st != T12_WAIT_CCS || t->hs_len)
                 return abort13(c, ALERT_UNEXPECTED_MESSAGE, OTERR_PROTOCOL, "an unexpected ChangeCipherSpec");
             t->rd_on = 1;                      /* the keys were made with the master secret */
@@ -709,35 +703,35 @@ static LONG open_record(struct OTConnection *c)
             t->pt_type = type;
             return OTERR_OK;
         }
-        if (type != BR_SSL_HANDSHAKE && type != BR_SSL_ALERT && type != BR_SSL_APPLICATION_DATA)
+        if (type != OT_SSL_HANDSHAKE && type != OT_SSL_ALERT && type != OT_SSL_APPLICATION_DATA)
             return abort13(c, ALERT_UNEXPECTED_MESSAGE, OTERR_PROTOCOL, "an unexpected record");
         if (t->rd_on) {
             int err = ot12_open(&t->rd, t->rx, 5 + len, &len);
-            if (err == BR_ERR_BAD_MAC)
+            if (err == OT_ERR_BAD_MAC)
                 return abort13(c, ALERT_BAD_RECORD_MAC, OTERR_PROTOCOL, "a record does not decrypt");
             if (err)
-                return abort13(c, err == BR_ERR_TOO_LARGE ? ALERT_RECORD_OVERFLOW : ALERT_DECODE_ERROR,
+                return abort13(c, err == OT_ERR_TOO_LARGE ? ALERT_RECORD_OVERFLOW : ALERT_DECODE_ERROR,
                                OTERR_PROTOCOL, "a malformed record");
         }
         t->pt = t->rx + 5;
         t->pt_len = len;
         t->pt_type = type;
-        if (type == BR_SSL_APPLICATION_DATA && t->st != T13_OPEN)
+        if (type == OT_SSL_APPLICATION_DATA && t->st != T13_OPEN)
             return abort13(c, ALERT_UNEXPECTED_MESSAGE, OTERR_PROTOCOL, "application data before Finished");
-        if (type != BR_SSL_HANDSHAKE && t->hs_len)
+        if (type != OT_SSL_HANDSHAKE && t->hs_len)
             return abort13(c, ALERT_UNEXPECTED_MESSAGE, OTERR_PROTOCOL, "a handshake message cut short");
         return OTERR_OK;
     }
-    if (type == BR_SSL_APPLICATION_DATA && t->rd_on) {
+    if (type == OT_SSL_APPLICATION_DATA && t->rd_on) {
         int err = ot13_open(&t->rd, t->rx, 5 + len, &type, &len);
-        if (err == BR_ERR_BAD_MAC)
+        if (err == OT_ERR_BAD_MAC)
             return abort13(c, ALERT_BAD_RECORD_MAC, OTERR_PROTOCOL, "a record does not decrypt");
         if (err)
-            return abort13(c, err == BR_ERR_TOO_LARGE ? ALERT_RECORD_OVERFLOW : ALERT_UNEXPECTED_MESSAGE,
+            return abort13(c, err == OT_ERR_TOO_LARGE ? ALERT_RECORD_OVERFLOW : ALERT_UNEXPECTED_MESSAGE,
                            OTERR_PROTOCOL, "a malformed record");
-        if (type == BR_SSL_CHANGE_CIPHER_SPEC)
+        if (type == OT_SSL_CHANGE_CIPHER_SPEC)
             return abort13(c, ALERT_UNEXPECTED_MESSAGE, OTERR_PROTOCOL, "an encrypted ChangeCipherSpec");
-    } else if (type == BR_SSL_CHANGE_CIPHER_SPEC) {
+    } else if (type == OT_SSL_CHANGE_CIPHER_SPEC) {
         /* the compatibility mode's: one byte 1, between the ServerHello and Finished */
         if (len != 1 || t->rx[5] != 1 || t->st < T13_WAIT_SH || t->st >= T13_OPEN
             || (t->st == T13_WAIT_SH && !t->hrr))
@@ -745,17 +739,17 @@ static LONG open_record(struct OTConnection *c)
         t->pt_len = 0;
         t->pt_type = type;
         return OTERR_OK;
-    } else if (t->rd_on && type != BR_SSL_ALERT) {
+    } else if (t->rd_on && type != OT_SSL_ALERT) {
         return abort13(c, ALERT_UNEXPECTED_MESSAGE, OTERR_PROTOCOL, "a record in the clear");
-    } else if (type != BR_SSL_HANDSHAKE && type != BR_SSL_ALERT) {
+    } else if (type != OT_SSL_HANDSHAKE && type != OT_SSL_ALERT) {
         return abort13(c, ALERT_UNEXPECTED_MESSAGE, OTERR_PROTOCOL, "an unexpected record");
     }
     t->pt = t->rx + 5;
     t->pt_len = len;
     t->pt_type = type;
-    if (type == BR_SSL_APPLICATION_DATA && t->st != T13_OPEN)
+    if (type == OT_SSL_APPLICATION_DATA && t->st != T13_OPEN)
         return abort13(c, ALERT_UNEXPECTED_MESSAGE, OTERR_PROTOCOL, "application data before Finished");
-    if (type != BR_SSL_HANDSHAKE && t->hs_len)
+    if (type != OT_SSL_HANDSHAKE && t->hs_len)
         return abort13(c, ALERT_UNEXPECTED_MESSAGE, OTERR_PROTOCOL, "a handshake message cut short");
     return OTERR_OK;
 }
@@ -769,37 +763,37 @@ static LONG handle_alert(struct OTConnection *c, const unsigned char *p, size_t 
         return OTERR_CLOSED;
     }
     if (p[1] == ALERT_USER_CANCELED) return OTERR_OK;    /* close_notify follows */
-    return ot_engine_error(c, BR_ERR_RECV_FATAL_ALERT + p[1]);
+    return ot_engine_error(c, OT_ERR_RECV_FATAL_ALERT + p[1]);
 }
 
 /* ---- certificate checks and signatures ---- */
 
-static void hash_once(const br_hash_class *h, const void *d, size_t n, unsigned char *out)
+static void hash_once(const ot_hash_class *h, const void *d, size_t n, unsigned char *out)
 {
-    br_hash_compat_context hc;
+    ot_hash_compat_context hc;
     h->init(&hc.vtable);
     h->update(&hc.vtable, d, n);
     h->out(&hc.vtable, out);
 }
-static void pss_sha256(const void *d, size_t n, uint8_t *o) { hash_once(&br_sha256_vtable, d, n, o); }
-static void pss_sha384(const void *d, size_t n, uint8_t *o) { hash_once(&br_sha384_vtable, d, n, o); }
-static void pss_sha512(const void *d, size_t n, uint8_t *o) { hash_once(&br_sha512_vtable, d, n, o); }
+static void pss_sha256(const void *d, size_t n, uint8_t *o) { hash_once(&ot_sha256_vtable, d, n, o); }
+static void pss_sha384(const void *d, size_t n, uint8_t *o) { hash_once(&ot_sha384_vtable, d, n, o); }
+static void pss_sha512(const void *d, size_t n, uint8_t *o) { hash_once(&ot_sha512_vtable, d, n, o); }
 
-int ot13_rsa_pss(const struct ot_impls *m, const br_rsa_public_key *pk, const br_hash_class *h,
+int ot13_rsa_pss(const struct ot_impls *m, const ot_rsa_public_key *pk, const ot_hash_class *h,
                  const unsigned char *hash, const unsigned char *sig, size_t siglen)
 {
     return ot_rsa_pss(m, pk, h, hash, hlen_of(h), sig, siglen);
 }
 
-int ot_rsa_pss(const struct ot_impls *m, const br_rsa_public_key *pk, const br_hash_class *h,
+int ot_rsa_pss(const struct ot_impls *m, const ot_rsa_public_key *pk, const ot_hash_class *h,
                const unsigned char *hash, size_t salt, const unsigned char *sig, size_t siglen)
 {
     unsigned char *em;
     const unsigned char *n = pk->n;
     size_t nlen = pk->nlen, bits, hl = hlen_of(h);
     int ok;
-    oc_hash_fn fn = h == &br_sha384_vtable ? pss_sha384 : h == &br_sha512_vtable ? pss_sha512 : pss_sha256;
-    if (h != &br_sha256_vtable && h != &br_sha384_vtable && h != &br_sha512_vtable) return 0;
+    oc_hash_fn fn = h == &ot_sha384_vtable ? pss_sha384 : h == &ot_sha512_vtable ? pss_sha512 : pss_sha256;
+    if (h != &ot_sha256_vtable && h != &ot_sha384_vtable && h != &ot_sha512_vtable) return 0;
     while (nlen && !n[0]) { ++n; --nlen; }
     if (!nlen || siglen != nlen || nlen > OC_RSA_MAX_BYTES) return 0;
     for (bits = 8 * nlen; !(n[0] & (0x80 >> (8 * nlen - bits))); --bits) {}
@@ -811,51 +805,51 @@ int ot_rsa_pss(const struct ot_impls *m, const br_rsa_public_key *pk, const br_h
     return ok;
 }
 
-int ot13_verify_cv(struct OTConnection *c, const struct ot_impls *m, unsigned scheme, const br_x509_pkey *pk,
+int ot13_verify_cv(struct OTConnection *c, const struct ot_impls *m, unsigned scheme, const ot_x509_pkey *pk,
                    const unsigned char *ed25519, const unsigned char *thash, size_t thlen,
                    const unsigned char *sig, size_t siglen)
 {
     static const char ctx[] = "TLS 1.3, server CertificateVerify";
     unsigned char content[64 + sizeof ctx + OT13_HASH_MAX], h[64];
-    const br_hash_class *hc;
+    const ot_hash_class *hc;
     size_t cl = 64 + sizeof ctx + thlen;       /* sizeof includes the 0 separator */
     int sv;
     memset(content, 0x20, 64);
     memcpy(content + 64, ctx, sizeof ctx);
     memcpy(content + 64 + sizeof ctx, thash, thlen);
     if (scheme == 0x0807) {
-        if (!ed25519 || siglen != 64) return BR_ERR_INVALID_ALGORITHM;
+        if (!ed25519 || siglen != 64) return OT_ERR_INVALID_ALGORITHM;
         if ((sv = svc_check(c, OTK_ED25519, NULL, content, cl, sig, siglen)) >= 0)
-            return sv ? 0 : BR_ERR_BAD_SIGNATURE;
-        return ot_glue_ed25519(sig, ed25519, content, cl) == 1 ? 0 : BR_ERR_BAD_SIGNATURE;
+            return sv ? 0 : OT_ERR_BAD_SIGNATURE;
+        return ot_glue_ed25519(sig, ed25519, content, cl) == 1 ? 0 : OT_ERR_BAD_SIGNATURE;
     }
-    if (!pk) return BR_ERR_INVALID_ALGORITHM;
+    if (!pk) return OT_ERR_INVALID_ALGORITHM;
     switch (scheme) {
-    case 0x0403: case 0x0804: hc = &br_sha256_vtable; break;
-    case 0x0503: case 0x0805: hc = &br_sha384_vtable; break;
-    case 0x0603: case 0x0806: hc = &br_sha512_vtable; break;
-    default: return BR_ERR_INVALID_ALGORITHM;
+    case 0x0403: case 0x0804: hc = &ot_sha256_vtable; break;
+    case 0x0503: case 0x0805: hc = &ot_sha384_vtable; break;
+    case 0x0603: case 0x0806: hc = &ot_sha512_vtable; break;
+    default: return OT_ERR_INVALID_ALGORITHM;
     }
     hash_once(hc, content, cl, h);
     if ((scheme & 0xFF) == 3) {
-        int curve = scheme == 0x0403 ? BR_EC_secp256r1 : scheme == 0x0503 ? BR_EC_secp384r1 : BR_EC_secp521r1;
-        if (pk->key_type != BR_KEYTYPE_EC || pk->key.ec.curve != curve) return BR_ERR_INVALID_ALGORITHM;
+        int curve = scheme == 0x0403 ? OT_EC_secp256r1 : scheme == 0x0503 ? OT_EC_secp384r1 : OT_EC_secp521r1;
+        if (pk->key_type != OT_KEYTYPE_EC || pk->key.ec.curve != curve) return OT_ERR_INVALID_ALGORITHM;
         if ((sv = svc_check(c, OTK_ECDSA, hc, h, hlen_of(hc), sig, siglen)) >= 0)
-            return sv ? 0 : BR_ERR_BAD_SIGNATURE;
-        return m->ecdsa_vrfy(m->ec, h, hlen_of(hc), &pk->key.ec, sig, siglen) ? 0 : BR_ERR_BAD_SIGNATURE;
+            return sv ? 0 : OT_ERR_BAD_SIGNATURE;
+        return m->ecdsa_vrfy(m->ec, h, hlen_of(hc), &pk->key.ec, sig, siglen) ? 0 : OT_ERR_BAD_SIGNATURE;
     }
-    if (pk->key_type != BR_KEYTYPE_RSA) return BR_ERR_INVALID_ALGORITHM;
+    if (pk->key_type != OT_KEYTYPE_RSA) return OT_ERR_INVALID_ALGORITHM;
     if ((sv = svc_check(c, OTK_RSA_PSS, hc, h, hlen_of(hc), sig, siglen)) >= 0)
-        return sv ? 0 : BR_ERR_BAD_SIGNATURE;
-    return ot13_rsa_pss(m, &pk->key.rsa, hc, h, sig, siglen) ? 0 : BR_ERR_BAD_SIGNATURE;
+        return sv ? 0 : OT_ERR_BAD_SIGNATURE;
+    return ot13_rsa_pss(m, &pk->key.rsa, hc, h, sig, siglen) ? 0 : OT_ERR_BAD_SIGNATURE;
 }
 
 static int cert_alert(int err)
 {
     switch (err) {
-    case BR_ERR_X509_NOT_TRUSTED: return ALERT_UNKNOWN_CA;
-    case BR_ERR_X509_EXPIRED: return ALERT_CERT_EXPIRED;
-    case BR_ERR_X509_UNSUPPORTED: return ALERT_UNSUPPORTED_CERT;
+    case OT_ERR_X509_NOT_TRUSTED: return ALERT_UNKNOWN_CA;
+    case OT_ERR_X509_EXPIRED: return ALERT_CERT_EXPIRED;
+    case OT_ERR_X509_UNSUPPORTED: return ALERT_UNSUPPORTED_CERT;
     default: return ALERT_BAD_CERTIFICATE;
     }
 }
@@ -872,7 +866,7 @@ static LONG cert_failed(struct OTConnection *c, int err)
 static LONG derive_handshake_keys(struct OTConnection *c, const unsigned char *shared, size_t slen)
 {
     struct ot13 *t = c->t13;
-    const br_hash_class *h = t->hash;
+    const ot_hash_class *h = t->hash;
     unsigned char early[OT13_HASH_MAX], derived[OT13_HASH_MAX], th[OT13_HASH_MAX];
     ot13_extract(h, NULL, t->psk_used ? t->offer->psk : NULL, t->suite->hash_len, early);
     ot13_derive(h, early, "derived", NULL, derived);
@@ -886,6 +880,17 @@ static LONG derive_handshake_keys(struct OTConnection *c, const unsigned char *s
         return abort13(c, ALERT_INTERNAL_ERROR, OTERR_INTERNAL, "The AES table does not fit.");
     t->rd_on = t->wr_on = 1;
     return OTERR_OK;
+}
+
+/* when the connection's buffer is large (not OTCF_SMALL_BUFFERS), whole
+ * records go out from the part the records coming in do not use */
+static void big_tx(struct OTConnection *c)
+{
+    struct ot13 *t = c->t13;
+    if (t->tx_len == 0 && c->iobuf_len >= OT13_RX_MAX + 5 + OT13_RECORD_MAX + OT12_OVERHEAD + OT13_TX_SPARE) {
+        t->tx = c->iobuf + OT13_RX_MAX;
+        t->tx_cap = c->iobuf_len - OT13_RX_MAX;
+    }
 }
 
 static int offered_suite(unsigned id)
@@ -913,6 +918,7 @@ static LONG server_hello(struct OTConnection *c, const unsigned char *msg, size_
     size_t slen;
     LONG rc;
 
+    (void)rest;
     r.p = msg + 4; r.n = mlen - 4; r.bad = 0;
     rd16(&r);                                  /* legacy_version */
     random = r.p;
@@ -980,14 +986,19 @@ static LONG server_hello(struct OTConnection *c, const unsigned char *msg, size_
                            "The server does not speak TLS 1.3, and the connection allows nothing older.");
         /* RFC 8446 section 4.1.3: a TLS 1.3 server that is made to answer
          * with 1.2 or less says so in the last 8 bytes of its random */
-        if (!memcmp(random + 24, "DOWNGRD", 7) && (random[31] == 0 || random[31] == 1))
+        if (ot13_wanted(c) && !memcmp(random + 24, "DOWNGRD", 7) && (random[31] == 0 || random[31] == 1))
             return abort13(c, ALERT_ILLEGAL_PARAMETER, OTERR_VERSION,
                            "The connection was pushed down from TLS 1.3 (an attack, or a broken middlebox).");
-        if (get16(msg + 4) == OT_TLS12 && suite12(suite) && !ot12_off())
-            return t12_server_hello(c, msg, mlen);
-        t->st = T13_BRIDGE;
-        return ot13_bridge_start(c, msg, mlen, rest, rest_len);
+        if (get16(msg + 4) != OT_TLS12)
+            return abort13(c, ALERT_PROTOCOL_VERSION, OTERR_VERSION,
+                           "The server wants TLS 1.1 or older, which GFOpenTLS no longer speaks.");
+        if (!suite12(suite))
+            return abort13(c, ALERT_ILLEGAL_PARAMETER, OTERR_CIPHER,
+                           "The server chose a cipher suite GFOpenTLS did not offer.");
+        return t12_server_hello(c, msg, mlen);
     }
+    if (!ot13_wanted(c))
+        return abort13(c, ALERT_UNSUPPORTED_EXT, OTERR_PROTOCOL, "an extension it was not offered");
     if (r.bad == 2) return abort13(c, ALERT_UNSUPPORTED_EXT, OTERR_PROTOCOL, "an extension it was not offered");
     if (version != OT_TLS13)
         return abort13(c, ALERT_ILLEGAL_PARAMETER, OTERR_PROTOCOL, "a version it was not offered");
@@ -1016,8 +1027,8 @@ static LONG server_hello(struct OTConnection *c, const unsigned char *msg, size_
         ch1[0] = HS_MESSAGE_HASH;
         put24(ch1 + 1, s->hash_len);
         th_out(t, t->hash, ch1 + 4);
-        if (t->hash == &br_sha384_vtable) br_sha384_init(&t->th384);
-        else br_sha256_init(&t->th256);
+        if (t->hash == &ot_sha384_vtable) ot_sha384_init(&t->th384);
+        else ot_sha256_init(&t->th256);
         th_update(t, ch1, 4 + s->hash_len);
         th_update(t, msg, mlen);
         if (have_share) t->group = group;
@@ -1061,11 +1072,7 @@ static LONG server_hello(struct OTConnection *c, const unsigned char *msg, size_
     rc = derive_handshake_keys(c, shared, slen);
     memset(shared, 0, sizeof shared);
     if (rc != OTERR_OK) return rc;
-    /* BearSSL is done with: its buffer is ours */
-    if (t->tx_len == 0 && c->iobuf_len >= OT13_RX_MAX + 5 + OT13_RECORD_MAX + 17 + OT13_TX_SPARE) {
-        t->tx = c->iobuf + OT13_RX_MAX;
-        t->tx_cap = c->iobuf_len - OT13_RX_MAX;
-    }
+    big_tx(c);
     t->st = T13_WAIT_EE;
     return OTERR_OK;
 }
@@ -1131,7 +1138,7 @@ static LONG certificate_request(struct OTConnection *c, struct rd *r)
 static LONG certificate(struct OTConnection *c, struct rd *r)
 {
     struct ot13 *t = c->t13;
-    const br_x509_class **xc = &c->x509.vtable;
+    const ot_x509_class **xc = &c->x509.vtable;
     struct rd list;
     unsigned err;
     int count = 0;
@@ -1156,8 +1163,8 @@ static LONG certificate(struct OTConnection *c, struct rd *r)
     if (err) return cert_failed(c, (int)err);
     if (!c->x509.leaf_ed25519) {
         unsigned usages = 0;
-        if (!(*xc)->get_pkey(xc, &usages)) return cert_failed(c, BR_ERR_X509_UNSUPPORTED);
-        if (!(usages & BR_KEYTYPE_SIGN)) return cert_failed(c, BR_ERR_WRONG_KEY_USAGE);
+        if (!(*xc)->get_pkey(xc, &usages)) return cert_failed(c, OT_ERR_X509_UNSUPPORTED);
+        if (!(usages & OT_KEYTYPE_SIGN)) return cert_failed(c, OT_ERR_WRONG_KEY_USAGE);
     }
     t->have_cert = 1;
     t->st = T13_WAIT_CV;
@@ -1167,7 +1174,7 @@ static LONG certificate(struct OTConnection *c, struct rd *r)
 static LONG certificate_verify(struct OTConnection *c, struct rd *r, const unsigned char *thash)
 {
     struct ot13 *t = c->t13;
-    const br_x509_class **xc = &c->x509.vtable;
+    const ot_x509_class **xc = &c->x509.vtable;
     unsigned scheme = rd16(r);
     size_t n = rd16(r), i;
     const unsigned char *sig = r->p;
@@ -1183,13 +1190,13 @@ static LONG certificate_verify(struct OTConnection *c, struct rd *r, const unsig
                          c->x509.leaf_ed25519 ? NULL : (*xc)->get_pkey(xc, NULL),
                          c->x509.leaf_ed25519 ? c->x509.ed25519 : NULL,
                          thash, t->suite->hash_len, sig, n);
-    if (err == BR_ERR_INVALID_ALGORITHM)
+    if (err == OT_ERR_INVALID_ALGORITHM)
         return abort13(c, ALERT_ILLEGAL_PARAMETER, OTERR_CIPHER,
                        "The server's signature scheme does not suit its key.");
     if (err) {
         queue_alert(c, 2, ALERT_DECRYPT_ERROR);
         tx_flush(c);
-        return ot_engine_error(c, BR_ERR_BAD_SIGNATURE);
+        return ot_engine_error(c, OT_ERR_BAD_SIGNATURE);
     }
     t->st = T13_WAIT_FIN;
     return OTERR_OK;
@@ -1200,7 +1207,7 @@ static LONG certificate_verify(struct OTConnection *c, struct rd *r, const unsig
 static LONG client_finished(struct OTConnection *c)
 {
     struct ot13 *t = c->t13;
-    const br_hash_class *h = t->hash;
+    const ot_hash_class *h = t->hash;
     size_t hl = t->suite->hash_len;
     unsigned char th[OT13_HASH_MAX], *rec;
     queue_ccs(t);
@@ -1213,7 +1220,7 @@ static LONG client_finished(struct OTConnection *c)
         memcpy(rec + 10, t->cr_ctx, t->cr_ctx_len);
         put24(rec + 10 + t->cr_ctx_len, 0);
         th_update(t, rec + 5, 4 + 1 + t->cr_ctx_len + 3);
-        tx_record(t, rec, BR_SSL_HANDSHAKE, 4 + 1 + t->cr_ctx_len + 3);
+        tx_record(t, rec, OT_SSL_HANDSHAKE, 4 + 1 + t->cr_ctx_len + 3);
     }
     rec = tx_room(t, 4 + hl);
     if (!rec) return abort13(c, ALERT_INTERNAL_ERROR, OTERR_INTERNAL, "No room for Finished.");
@@ -1222,7 +1229,7 @@ static LONG client_finished(struct OTConnection *c)
     put24(rec + 6, hl);
     ot13_finished(h, t->c_hs, th, rec + 9);
     th_update(t, rec + 5, 4 + hl);
-    tx_record(t, rec, BR_SSL_HANDSHAKE, 4 + hl);
+    tx_record(t, rec, OT_SSL_HANDSHAKE, 4 + hl);
     th_out(t, h, th);
     ot13_derive(h, t->master, "res master", th, t->res_master);
     if (ot13_keys_set(&t->wr, t->suite, &c->impls, t->c_ap))
@@ -1238,7 +1245,7 @@ static LONG client_finished(struct OTConnection *c)
 static LONG server_finished(struct OTConnection *c, struct rd *r, const unsigned char *thash)
 {
     struct ot13 *t = c->t13;
-    const br_hash_class *h = t->hash;
+    const ot_hash_class *h = t->hash;
     size_t hl = t->suite->hash_len;
     unsigned char want[OT13_HASH_MAX];
     if (r->n != hl) return abort13(c, ALERT_DECODE_ERROR, OTERR_PROTOCOL, "a malformed Finished");
@@ -1246,7 +1253,7 @@ static LONG server_finished(struct OTConnection *c, struct rd *r, const unsigned
     if (!ct_equal(want, r->p, hl)) {
         queue_alert(c, 2, ALERT_DECRYPT_ERROR);
         tx_flush(c);
-        return ot_fail(c, OTERR_PROTOCOL, BR_ERR_BAD_FINISHED,
+        return ot_fail(c, OTERR_PROTOCOL, OT_ERR_BAD_FINISHED,
                        "The server's Finished message does not verify.", NULL, NULL);
     }
     return OTERR_OK;
@@ -1256,7 +1263,7 @@ static LONG server_finished(struct OTConnection *c, struct rd *r, const unsigned
 static LONG application_keys(struct OTConnection *c)
 {
     struct ot13 *t = c->t13;
-    const br_hash_class *h = t->hash;
+    const ot_hash_class *h = t->hash;
     unsigned char derived[OT13_HASH_MAX], th[OT13_HASH_MAX];
     ot13_derive(h, t->hs_secret, "derived", NULL, derived);
     ot13_extract(h, derived, NULL, 0, t->master);
@@ -1326,7 +1333,7 @@ static LONG key_update(struct OTConnection *c, struct rd *r, int last)
         rec[5] = HS_KEY_UPDATE;
         put24(rec + 6, 1);
         rec[9] = 0;
-        tx_record(t, rec, BR_SSL_HANDSHAKE, 5);
+        tx_record(t, rec, OT_SSL_HANDSHAKE, 5);
         if (ot13_keys_next(&t->wr))
             return abort13(c, ALERT_INTERNAL_ERROR, OTERR_INTERNAL, "The AES table does not fit.");
         t->updates_sent++;
@@ -1357,14 +1364,15 @@ static LONG t12_keys(struct OTConnection *c)
 {
     struct ot13 *t = c->t13;
     const struct ot13_suite *s = t->suite;
-    unsigned char seed[64], kb[2 * 32 + 2 * 12];
-    size_t kl = s->key_len, il = s->chacha ? 12 : 4;
+    unsigned char seed[64], kb[2 * 48 + 2 * 32 + 2 * 12];
+    size_t ml = s->mac_len, kl = s->key_len, il = s->mac ? 0 : s->chacha ? 12 : 4;
     int bad;
     memcpy(seed, t->srandom, 32);
     memcpy(seed + 32, t->random, 32);
-    ot12_prf(s->hash, t->master12, 48, "key expansion", seed, 64, kb, 2 * kl + 2 * il);
-    bad = ot12_keys_set(&t->wr, s, &c->impls, kb, kb + 2 * kl)
-       || ot12_keys_set(&t->rd, s, &c->impls, kb + kl, kb + 2 * kl + il);
+    /* client MAC key, server MAC key, client key, server key, client IV, server IV */
+    ot12_prf(s->hash, t->master12, 48, "key expansion", seed, 64, kb, 2 * ml + 2 * kl + 2 * il);
+    bad = ot12_keys_set(&t->wr, s, &c->impls, kb, kb + 2 * ml, kb + 2 * ml + 2 * kl, 1)
+       || ot12_keys_set(&t->rd, s, &c->impls, kb + ml, kb + 2 * ml + kl, kb + 2 * ml + 2 * kl + il, 0);
     memset(kb, 0, sizeof kb);
     if (bad) return abort13(c, ALERT_INTERNAL_ERROR, OTERR_INTERNAL, "The AES table does not fit.");
     return OTERR_OK;
@@ -1374,7 +1382,7 @@ static LONG t12_keys(struct OTConnection *c)
 static LONG t12_server_hello(struct OTConnection *c, const unsigned char *msg, size_t mlen)
 {
     struct ot13 *t = c->t13;
-    br_ssl_session_parameters *sp = &c->cc.eng.session;
+    struct ot12_session *sp = &c->session12;
     struct rd r, ex;
     const unsigned char *sid;
     size_t sid_len;
@@ -1448,8 +1456,8 @@ static LONG t12_server_hello(struct OTConnection *c, const unsigned char *msg, s
 static LONG t12_certificate(struct OTConnection *c, struct rd *r)
 {
     struct ot13 *t = c->t13;
-    const br_x509_class **xc = &c->x509.vtable;
-    const br_x509_pkey *pk;
+    const ot_x509_class **xc = &c->x509.vtable;
+    const ot_x509_pkey *pk;
     struct rd list = rdsub(r, rd24(r));
     unsigned err, usages = 0;
     int count = 0;
@@ -1470,12 +1478,13 @@ static LONG t12_certificate(struct OTConnection *c, struct rd *r)
     err = (*xc)->end_chain(xc);
     if (err) return cert_failed(c, (int)err);
     pk = (*xc)->get_pkey(xc, &usages);
-    if (!pk) return cert_failed(c, BR_ERR_X509_UNSUPPORTED);
-    if (!(usages & BR_KEYTYPE_SIGN)) return cert_failed(c, BR_ERR_WRONG_KEY_USAGE);
-    if (pk->key_type != (suite12_ecdsa(t->suite->id) ? BR_KEYTYPE_EC : BR_KEYTYPE_RSA))
-        return cert_failed(c, BR_ERR_WRONG_KEY_USAGE);
+    if (!pk) return cert_failed(c, OT_ERR_X509_UNSUPPORTED);
+    if (!(usages & (t->suite->rsa_kx ? OT_KEYTYPE_KEYX : OT_KEYTYPE_SIGN)))
+        return cert_failed(c, OT_ERR_WRONG_KEY_USAGE);
+    if (pk->key_type != (t->suite->ecdsa ? OT_KEYTYPE_EC : OT_KEYTYPE_RSA))
+        return cert_failed(c, OT_ERR_WRONG_KEY_USAGE);
     t->have_cert = 1;
-    t->st = T12_WAIT_SKE;
+    t->st = t->suite->rsa_kx ? T12_WAIT_SHD : T12_WAIT_SKE;
     return OTERR_OK;
 }
 
@@ -1483,12 +1492,12 @@ static LONG t12_certificate(struct OTConnection *c, struct rd *r)
 static LONG t12_server_key_exchange(struct OTConnection *c, struct rd *r)
 {
     struct ot13 *t = c->t13;
-    const br_x509_class **xc = &c->x509.vtable;
-    const br_x509_pkey *pk = (*xc)->get_pkey(xc, NULL);
+    const ot_x509_class **xc = &c->x509.vtable;
+    const ot_x509_pkey *pk = (*xc)->get_pkey(xc, NULL);
     const unsigned char *params = r->p, *point, *sig;
-    const br_hash_class *hc;
+    const ot_hash_class *hc;
     const unsigned char *oid;
-    br_hash_compat_context hctx;
+    ot_hash_compat_context hctx;
     unsigned char h[64], hout[64], shared[66], pms[66];
     unsigned group, scheme;
     size_t plen, params_len, siglen, hl, i, slen;
@@ -1513,12 +1522,12 @@ static LONG t12_server_key_exchange(struct OTConnection *c, struct rd *r)
     if (!offered || !pk)
         return abort13(c, ALERT_ILLEGAL_PARAMETER, OTERR_CIPHER, "The server signed with a scheme GFOpenTLS did not offer.");
     switch (scheme >> 8) {
-    case 2: hc = &br_sha1_vtable; oid = BR_HASH_OID_SHA1; break;
-    case 4: hc = &br_sha256_vtable; oid = BR_HASH_OID_SHA256; break;
-    case 5: hc = &br_sha384_vtable; oid = BR_HASH_OID_SHA384; break;
-    case 6: hc = &br_sha512_vtable; oid = BR_HASH_OID_SHA512; break;
+    case 2: hc = &ot_sha1_vtable; oid = OT_HASH_OID_SHA1; break;
+    case 4: hc = &ot_sha256_vtable; oid = OT_HASH_OID_SHA256; break;
+    case 5: hc = &ot_sha384_vtable; oid = OT_HASH_OID_SHA384; break;
+    case 6: hc = &ot_sha512_vtable; oid = OT_HASH_OID_SHA512; break;
     case 8:
-        hc = scheme == 0x0804 ? &br_sha256_vtable : scheme == 0x0805 ? &br_sha384_vtable : &br_sha512_vtable;
+        hc = scheme == 0x0804 ? &ot_sha256_vtable : scheme == 0x0805 ? &ot_sha384_vtable : &ot_sha512_vtable;
         oid = NULL;
         break;
     default:
@@ -1531,19 +1540,19 @@ static LONG t12_server_key_exchange(struct OTConnection *c, struct rd *r)
     hc->update(&hctx.vtable, params, params_len);
     hc->out(&hctx.vtable, h);
     if ((scheme >> 8) == 8) {                         /* RSA-PSS with an rsaEncryption key */
-        if (pk->key_type == BR_KEYTYPE_RSA && (ok = svc_check(c, OTK_RSA_PSS, hc, h, hl, sig, siglen)) < 0)
+        if (pk->key_type == OT_KEYTYPE_RSA && (ok = svc_check(c, OTK_RSA_PSS, hc, h, hl, sig, siglen)) < 0)
             ok = ot13_rsa_pss(&c->impls, &pk->key.rsa, hc, h, sig, siglen);
     } else if ((scheme & 0xFF) == 1) {                /* RSA PKCS #1 v1.5 */
-        if (pk->key_type == BR_KEYTYPE_RSA && (ok = svc_check(c, OTK_RSA_PKCS1, hc, h, hl, sig, siglen)) < 0)
+        if (pk->key_type == OT_KEYTYPE_RSA && (ok = svc_check(c, OTK_RSA_PKCS1, hc, h, hl, sig, siglen)) < 0)
             ok = c->impls.rsa_vrfy(sig, siglen, oid, hl, &pk->key.rsa, hout) && ct_equal(hout, h, hl);
     } else if ((scheme & 0xFF) == 3) {                /* ECDSA */
-        if (pk->key_type == BR_KEYTYPE_EC && (ok = svc_check(c, OTK_ECDSA, hc, h, hl, sig, siglen)) < 0)
+        if (pk->key_type == OT_KEYTYPE_EC && (ok = svc_check(c, OTK_ECDSA, hc, h, hl, sig, siglen)) < 0)
             ok = c->impls.ecdsa_vrfy(c->impls.ec, h, hl, &pk->key.ec, sig, siglen) ? 1 : 0;
     }
     if (!ok) {
         queue_alert(c, 2, ALERT_DECRYPT_ERROR);
         tx_flush(c);
-        return ot_engine_error(c, BR_ERR_BAD_SIGNATURE);
+        return ot_engine_error(c, OT_ERR_BAD_SIGNATURE);
     }
     /* our share and the premaster secret */
     t->group = group;
@@ -1554,7 +1563,7 @@ static LONG t12_server_key_exchange(struct OTConnection *c, struct rd *r)
         rc = make_p256(c, t->kx_pub);
         t->kx_len = 65;
     } else {
-        t->kx_len = make_ec(c, group == GROUP_P384 ? BR_EC_secp384r1 : BR_EC_secp521r1, t->kx_pub);
+        t->kx_len = make_ec(c, group == GROUP_P384 ? OT_EC_secp384r1 : OT_EC_secp521r1, t->kx_pub);
         rc = t->kx_len ? OTERR_OK : OTERR_RANDOM;
     }
     if (rc != OTERR_OK) return abort13(c, ALERT_INTERNAL_ERROR, rc, "No key share could be made.");
@@ -1596,7 +1605,7 @@ static LONG t12_send(struct OTConnection *c, int type, const unsigned char *body
     put24(rec + 6, len);
     if (len) memcpy(rec + 9, body, len);
     th_update(t, rec + 5, 4 + len);
-    tx_record(t, rec, BR_SSL_HANDSHAKE, 4 + len);
+    tx_record(t, rec, OT_SSL_HANDSHAKE, 4 + len);
     return OTERR_OK;
 }
 
@@ -1614,11 +1623,51 @@ static LONG t12_client_finished(struct OTConnection *c)
     return rc;
 }
 
+/* RSA key exchange (section 7.4.7.1): a premaster secret of ours,
+ * encrypted to the server's key with PKCS #1 v1.5 padding, sent in cke;
+ * the master secret from it */
+static LONG t12_rsa_key_exchange(struct OTConnection *c, unsigned char *cke)
+{
+    struct ot13 *t = c->t13;
+    const ot_x509_class **xc = &c->x509.vtable;
+    const ot_x509_pkey *pk = (*xc)->get_pkey(xc, NULL);
+    unsigned char pms[48], seed[64], *em = cke + 2;
+    size_t nlen, i;
+    LONG rc;
+    if (!pk || pk->key_type != OT_KEYTYPE_RSA) return cert_failed(c, OT_ERR_WRONG_KEY_USAGE);
+    nlen = pk->key.rsa.nlen;
+    if (nlen < 48 + 11 || nlen > OC_RSA_MAX_BYTES)
+        return abort13(c, ALERT_INTERNAL_ERROR, OTERR_CIPHER, "The server's RSA key does not suit a key exchange.");
+    pms[0] = 3;
+    pms[1] = 3;                                         /* the version offered */
+    if (ot_random(pms + 2, 46) != OTERR_OK || ot_random(em + 2, nlen - 48 - 3) != OTERR_OK)
+        return abort13(c, ALERT_INTERNAL_ERROR, OTERR_RANDOM, "No random numbers for the handshake.");
+    em[0] = 0;
+    em[1] = 2;
+    for (i = 2; i < nlen - 48 - 1; ++i)                 /* the padding has no zero byte */
+        while (!em[i])
+            if (ot_random(em + i, 1) != OTERR_OK)
+                return abort13(c, ALERT_INTERNAL_ERROR, OTERR_RANDOM, "No random numbers for the handshake.");
+    em[nlen - 48 - 1] = 0;
+    memcpy(em + nlen - 48, pms, 48);
+    if (!c->impls.rsa_pub(em, nlen, &pk->key.rsa)) {
+        memset(pms, 0, sizeof pms);
+        return abort13(c, ALERT_INTERNAL_ERROR, OTERR_CIPHER, "The server's RSA key does not suit a key exchange.");
+    }
+    put16(cke, nlen);
+    rc = t12_send(c, HS_CLIENT_KEY_EXCH, cke, 2 + nlen);
+    memcpy(seed, t->random, 32);
+    memcpy(seed + 32, t->srandom, 32);
+    ot12_prf(t->hash, pms, 48, "master secret", seed, 64, t->master12, 48);
+    memset(pms, 0, sizeof pms);
+    return rc;
+}
+
 static LONG t12_server_hello_done(struct OTConnection *c, struct rd *r, int last)
 {
     struct ot13 *t = c->t13;
-    br_ssl_session_parameters *sp = &c->cc.eng.session;
-    unsigned char cke[1 + 133];
+    struct ot12_session *sp = &c->session12;
+    unsigned char cke[2 + OC_RSA_MAX_BYTES];
     LONG rc;
     if (r->n) return abort13(c, ALERT_DECODE_ERROR, OTERR_PROTOCOL, "a malformed ServerHelloDone");
     if (!last) return abort13(c, ALERT_UNEXPECTED_MESSAGE, OTERR_PROTOCOL, "data after ServerHelloDone");
@@ -1626,9 +1675,13 @@ static LONG t12_server_hello_done(struct OTConnection *c, struct rd *r, int last
         static const unsigned char none[3] = { 0, 0, 0 };
         if ((rc = t12_send(c, HS_CERTIFICATE, none, 3)) != OTERR_OK) return rc;
     }
-    cke[0] = (unsigned char)t->kx_len;
-    memcpy(cke + 1, t->kx_pub, t->kx_len);
-    if ((rc = t12_send(c, HS_CLIENT_KEY_EXCH, cke, 1 + t->kx_len)) != OTERR_OK) return rc;
+    if (t->suite->rsa_kx) {
+        if ((rc = t12_rsa_key_exchange(c, cke)) != OTERR_OK) return rc;
+    } else {
+        cke[0] = (unsigned char)t->kx_len;
+        memcpy(cke + 1, t->kx_pub, t->kx_len);
+        if ((rc = t12_send(c, HS_CLIENT_KEY_EXCH, cke, 1 + t->kx_len)) != OTERR_OK) return rc;
+    }
     if ((rc = t12_keys(c)) != OTERR_OK) return rc;
     if ((rc = t12_client_finished(c)) != OTERR_OK) return rc;
     sp->version = OT_TLS12;
@@ -1650,7 +1703,7 @@ static LONG t12_finished(struct OTConnection *c, struct rd *r, const unsigned ch
     if (!ct_equal(want, r->p, 12)) {
         queue_alert(c, 2, ALERT_DECRYPT_ERROR);
         tx_flush(c);
-        return ot_fail(c, OTERR_PROTOCOL, BR_ERR_BAD_FINISHED,
+        return ot_fail(c, OTERR_PROTOCOL, OT_ERR_BAD_FINISHED,
                        "The server's Finished message does not verify.", NULL, NULL);
     }
     th_update(t, msg, len);
@@ -1805,11 +1858,11 @@ static LONG one_record(struct OTConnection *c)
     if (rc != OTERR_OK) return rc;
     if ((rc = open_record(c)) != OTERR_OK) return rc;
     switch (t->pt_type) {
-    case BR_SSL_CHANGE_CIPHER_SPEC:
+    case OT_SSL_CHANGE_CIPHER_SPEC:
         return OTERR_OK;
-    case BR_SSL_ALERT:
+    case OT_SSL_ALERT:
         return handle_alert(c, t->pt, t->pt_len);
-    case BR_SSL_HANDSHAKE:
+    case OT_SSL_HANDSHAKE:
         if (!t->pt_len) return abort13(c, ALERT_UNEXPECTED_MESSAGE, OTERR_PROTOCOL, "an empty record");
         return handshake_bytes(c);
     default:                                   /* application data */
@@ -1827,7 +1880,7 @@ LONG ot13_handshake(struct OTConnection *c)
     LONG rc;
     for (;;) {
         if (t->tx_sent < t->tx_len && (rc = tx_flush(c)) != OTERR_OK) return rc;
-        if (t->st == T13_OPEN || t->st == T13_BRIDGE) return OTERR_OK;
+        if (t->st == T13_OPEN) return OTERR_OK;
         rc = one_record(c);
         if (rc == OTERR_CLOSED && c->clean_close)
             return ot_fail(c, OTERR_CLOSED, 0, "The server closed the connection during the handshake.", NULL, NULL);
@@ -1873,6 +1926,7 @@ LONG ot13_write(struct OTConnection *c, const unsigned char *buf, LONG len)
         if (rc != OTERR_OK) return rc;
     }
     if (t->close_sent) return ot_fail(c, OTERR_STATE, 0, "The connection is closing.", NULL, NULL);
+    if (t->tx == c->out) big_tx(c);
     while (total < len) {
         size_t n = (size_t)(len - total), room;
         unsigned char *rec;
@@ -1883,20 +1937,20 @@ LONG ot13_write(struct OTConnection *c, const unsigned char *buf, LONG len)
                 rec[5] = HS_KEY_UPDATE;
                 put24(rec + 6, 1);
                 rec[9] = 0;
-                tx_record(t, rec, BR_SSL_HANDSHAKE, 5);
+                tx_record(t, rec, OT_SSL_HANDSHAKE, 5);
                 if (ot13_keys_next(&t->wr))
                     return abort13(c, ALERT_INTERNAL_ERROR, OTERR_INTERNAL, "The AES table does not fit.");
                 t->updates_sent++;
             }
         }
         room = t->tx_cap - t->tx_len;
-        room = room > 5 + 24 + OT13_TX_SPARE ? room - 5 - 24 - OT13_TX_SPARE : 0;
+        room = room > 5 + OT12_OVERHEAD + OT13_TX_SPARE ? room - 5 - OT12_OVERHEAD - OT13_TX_SPARE : 0;
         if (room > OT13_RECORD_MAX) room = OT13_RECORD_MAX;
         if (n > room) n = room;
         if (n) {
             rec = t->tx + t->tx_len;
             memcpy(rec + 5, buf + total, n);
-            tx_record(t, rec, BR_SSL_APPLICATION_DATA, n);
+            tx_record(t, rec, OT_SSL_APPLICATION_DATA, n);
             total += (LONG)n;
         }
         rc = tx_flush(c);
@@ -1982,7 +2036,6 @@ void ot13_free(struct OTConnection *c)
     }
     t->waiting = NULL;
     ot_session_unlock();
-    ot13_bridge_free(c);
     if (t->ticket) { memset(t->ticket, 0, sizeof *t->ticket); ot_free(t->ticket); }
     if (t->hs) { memset(t->hs, 0, t->hs_cap); ot_free(t->hs); }
     ot_free(t->cookie);

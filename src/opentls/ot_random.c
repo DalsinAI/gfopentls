@@ -1,4 +1,4 @@
-/* GFOpenTLS: the random generator. HMAC-DRBG (SHA-256, BearSSL's), seeded
+/* GFOpenTLS: the random generator. HMAC-DRBG (SHA-256, ot_hmac.c), seeded
  * from the platform: on AmigaOS from the jitter between the E-clock and
  * the scheduler, sampled many times and hashed; in the host tests from
  * /dev/urandom. Fresh samples are mixed in at every call.
@@ -51,7 +51,7 @@ static void take_sample(struct ot_sample *s, ULONG counter)
 
 static int gather(unsigned char out[32], int rounds)
 {
-    br_sha256_context h;
+    ot_sha256_context h;
     struct ot_sample s;
     int i;
     if (!ot_timer_open) {
@@ -60,12 +60,12 @@ static int gather(unsigned char out[32], int rounds)
             ot_timer_open = 1;
         }
     }
-    br_sha256_init(&h);
+    ot_sha256_init(&h);
     for (i = 0; i < rounds; ++i) {
         take_sample(&s, (ULONG)i);
-        br_sha256_update(&h, &s, sizeof s);
+        ot_sha256_update(&h, &s, sizeof s);
     }
-    br_sha256_out(&h, out);
+    ot_sha256_out(&h, out);
     return TimerBase != NULL;
 }
 
@@ -86,7 +86,7 @@ static int gather(unsigned char out[32], int rounds)
 static void close_platform(void) {}
 #endif
 
-static br_hmac_drbg_context ot_drbg;
+static struct ot_drbg ot_rng;
 static int ot_seeded;
 static void *ot_rng_lock;
 static unsigned long ot_calls;
@@ -100,7 +100,7 @@ int ot_random_init(void)
 void ot_random_cleanup(void)
 {
     ot_lock(ot_rng_lock);
-    memset(&ot_drbg, 0, sizeof ot_drbg);
+    memset(&ot_rng, 0, sizeof ot_rng);
     ot_seeded = 0;
     close_platform();
     ot_unlock(ot_rng_lock);
@@ -120,7 +120,7 @@ LONG ot_random(void *buf, size_t len)
             ot_unlock(ot_rng_lock);
             return OTERR_RANDOM;
         }
-        br_hmac_drbg_init(&ot_drbg, &br_sha256_vtable, seed, sizeof seed);
+        ot_drbg_init(&ot_rng, seed, sizeof seed);
         ot_seeded = 1;
     } else {
         /* a few fresh samples each time; the state carries the rest */
@@ -130,9 +130,9 @@ LONG ot_random(void *buf, size_t len)
         seed[1] ^= (unsigned char)(ot_calls >> 8);
         seed[2] ^= (unsigned char)(ot_calls >> 16);
         seed[3] ^= (unsigned char)(ot_calls >> 24);
-        br_hmac_drbg_update(&ot_drbg, seed, sizeof seed);
+        ot_drbg_update(&ot_rng, seed, sizeof seed);
     }
-    br_hmac_drbg_generate(&ot_drbg, buf, len);
+    ot_drbg_generate(&ot_rng, buf, len);
     memset(seed, 0, sizeof seed);
     ot_unlock(ot_rng_lock);
     return OTERR_OK;

@@ -13,10 +13,10 @@
 #include <utility/hooks.h>
 #include <libraries/gfopentls.h>
 
-#include "bearssl.h"
+#include "ot_types.h"
 
-#define OT_LIB_VERSION   1
-#define OT_LIB_REVISION  8          /* 1.1: OT_GetPeerName; 1.2: S:GFOpenTLS/ca-bundle.pem, ENVARC:GFOpenTLS/certs/;
+#define OT_LIB_VERSION   2          /* 2.0: no BearSSL; TLS 1.2 and 1.3 only */
+#define OT_LIB_REVISION  0          /* 1.1: OT_GetPeerName; 1.2: S:GFOpenTLS/ca-bundle.pem, ENVARC:GFOpenTLS/certs/;
                                        1.3: TLS 1.3, OT_SetVersion, OT_SessionHasTicket;
                                        1.4: all maths in gfopencrypto.library 2.3, none of BearSSL's;
                                        1.5: OTV_REPORT, the whole chain, certificate fields, group and MAC names;
@@ -29,6 +29,8 @@
 #define OT_TEXT_MAX      200
 #define OT_LEAF_MAX      16384      /* the server's certificate kept for the caller */
 #define OT_OUT_MAX       4096       /* small records gathered into one send */
+#define OT_IOBUF_SMALL   (5 + 16384 + 320)               /* one record in (OT13_RX_MAX) */
+#define OT_IOBUF_LARGE   (OT_IOBUF_SMALL + 5 + 16384 + 80 + 64)  /* and one whole record out */
 #define OT_CHAIN_MAX     10         /* certificates kept from the server's chain */
 #define OT_CHAIN_BYTES   65536      /* and their bytes together */
 
@@ -58,8 +60,6 @@ void ot_local_to_utc(uint32_t days, uint32_t seconds, long west,
  * it small) */
 #define OT_KEY_UPDATE_AFTER (1UL << 23)
 uint32_t ot_key_update_after(void);
-/* TLS 1.2 by BearSSL instead of our own client (the host tests compare them) */
-int ot_tls12_bearssl(void);
 LONG ot_sock_read(LONG fd, struct Library *socketbase, void *buf, LONG len);
 LONG ot_sock_write(LONG fd, struct Library *socketbase, const void *buf, LONG len);
 LONG ot_hook_call(struct Hook *hook, void *object, struct OTIOMessage *msg);
@@ -83,27 +83,47 @@ ULONG ot_glue_accelerated(void);        /* OTACC_* */
 void ot_glue_cleanup(void);             /* library expunge */
 int ot_glue_ready(void);               /* gfopencrypto.library 2.3+ is there (Amiga) */
 struct ot_impls {
-    const br_hash_class *sha256, *sha384, *sha512;
-    br_rsa_pkcs1_vrfy rsa_vrfy;
-    br_rsa_public rsa_pub;
-    br_ecdsa_vrfy ecdsa_vrfy;
-    const br_ec_impl *ec;
-    const br_block_cbcenc_class *aes_cbcenc;
-    const br_block_cbcdec_class *aes_cbcdec;
-    const br_block_ctr_class *aes_ctr;
-    br_ghash ghash;
-    br_chacha20_run chacha20;
-    br_poly1305_run poly1305;
+    const ot_hash_class *sha256, *sha384, *sha512;
+    ot_rsa_pkcs1_vrfy rsa_vrfy;
+    ot_rsa_public rsa_pub;
+    ot_ecdsa_vrfy ecdsa_vrfy;
+    const ot_ec_impl *ec;
+    const ot_block_cbcenc_class *aes_cbcenc;
+    const ot_block_cbcdec_class *aes_cbcdec;
+    const ot_block_ctr_class *aes_ctr;
+    ot_ghash ghash;
+    ot_chacha20_run chacha20;
+    ot_poly1305_run poly1305;
 };
 /* the implementations a connection uses: GFOpenCrypto's where it is
  * accelerated (or everywhere, in the host tests), BearSSL's otherwise */
 void ot_glue_select(struct ot_impls *impls, int offload);
 /* RSA-PSS (MGF1 with the same hash) of a hash with a salt of salt bytes: 1 valid (ot_tls13.c) */
-int ot_rsa_pss(const struct ot_impls *m, const br_rsa_public_key *pk, const br_hash_class *h,
+int ot_rsa_pss(const struct ot_impls *m, const ot_rsa_public_key *pk, const ot_hash_class *h,
                const unsigned char *hash, size_t salt, const unsigned char *sig, size_t siglen);
 /* Ed25519 (TLS 1.3 certificates): whether there is one, and the check (1 valid) */
 int ot_glue_has_ed25519(void);
 int ot_glue_ed25519(const unsigned char *sig, const unsigned char *pk, const void *msg, size_t len);
+
+/* ---- HMAC and HMAC-DRBG (ot_hmac.c) ---- */
+struct ot_hmac_key {
+    const ot_hash_class *h;
+    unsigned char key[128];          /* the key, padded to the hash's block */
+};
+struct ot_hmac {
+    const struct ot_hmac_key *key;
+    ot_hash_compat_context inner;
+};
+void ot_hmac_key_init(struct ot_hmac_key *k, const ot_hash_class *h, const void *key, size_t len);
+void ot_hmac_init(struct ot_hmac *m, const struct ot_hmac_key *k);
+void ot_hmac_update(struct ot_hmac *m, const void *data, size_t len);
+size_t ot_hmac_out(struct ot_hmac *m, void *out);   /* the hash's output length */
+struct ot_drbg {
+    unsigned char k[32], v[32];
+};
+void ot_drbg_init(struct ot_drbg *d, const void *seed, size_t len);
+void ot_drbg_update(struct ot_drbg *d, const void *data, size_t len);
+void ot_drbg_generate(struct ot_drbg *d, void *out, size_t len);
 
 /* ---- the services card: gfopenservice.device's opentls.key/1 (ot_service.c) ---- */
 #define OTK_VERIFY    1
@@ -153,7 +173,7 @@ void ot_svc_cleanup(void);              /* library expunge */
 
 /* ---- trust (ot_trust.c) ---- */
 struct ot_anchors {
-    br_x509_trust_anchor *ta;
+    ot_x509_trust_anchor *ta;
     size_t count, cap;
 };
 LONG ot_anchors_add_pem(struct ot_anchors *a, const unsigned char *pem, size_t len);
@@ -168,18 +188,18 @@ int ot_trust_init(void);                /* library init: the store's lock */
 /* a public key as the certificate checks use it */
 #define OT_KEY_ED25519 3
 struct ot_key {
-    unsigned type;                   /* BR_KEYTYPE_RSA, BR_KEYTYPE_EC or OT_KEY_ED25519 */
-    br_x509_pkey pk;                 /* RSA and EC */
+    unsigned type;                   /* OT_KEYTYPE_RSA, OT_KEYTYPE_EC or OT_KEY_ED25519 */
+    ot_x509_pkey pk;                 /* RSA and EC */
     const unsigned char *ed;         /* Ed25519: 32 bytes */
     const unsigned char *spki;       /* the SubjectPublicKeyInfo (for the card), or NULL */
     size_t spki_len;
 };
 struct ot_x509 {
-    const br_x509_class *vtable;
-    br_sha256_context leaf_hash;
+    const ot_x509_class *vtable;
+    ot_sha256_context leaf_hash;
     struct OTConnection *conn;
     const struct ot_impls *impls;
-    const br_x509_trust_anchor *ta;
+    const ot_x509_trust_anchor *ta;
     size_t ta_count;
     int tls13;                       /* the TLS 1.3 client feeds it: Ed25519 leaves too */
     int leaf_ed25519;                /* the leaf's key is Ed25519, in ed25519 */
@@ -191,7 +211,7 @@ struct ot_x509 {
     size_t leaf_len, leaf_cap;
     struct ot_key leaf_key;          /* points into leaf or chain */
     int leaf_key_ok;
-    unsigned leaf_usages;            /* BR_KEYTYPE_KEYX, BR_KEYTYPE_SIGN */
+    unsigned leaf_usages;            /* OT_KEYTYPE_KEYX, OT_KEYTYPE_SIGN */
     unsigned char fingerprint[32];
     int have_fingerprint;
     unsigned char *chain;            /* the server's certificates, one after another */
@@ -203,11 +223,16 @@ struct ot_x509 {
 };
 void ot_x509_init(struct ot_x509 *x, struct OTConnection *conn,
                   const struct ot_impls *impls,
-                  const br_x509_trust_anchor *ta, size_t ta_count);
+                  const ot_x509_trust_anchor *ta, size_t ta_count);
 void ot_x509_free(struct ot_x509 *x);
 /* the first DNS name (or CN) of a certificate, for messages */
 void ot_cert_name(const unsigned char *der, size_t len, char *out, size_t outlen);
 int ot_cert_has_ip(const unsigned char *der, size_t len, const unsigned char *ip, size_t iplen);
+/* a certificate as a trust anchor takes it: the subject (whole DER) and
+ * the RSA or EC key, pointing into der, and whether it is a CA; 1, or 0
+ * when it cannot be one (ot_x509.c) */
+int ot_cert_anchor(const unsigned char *der, size_t len, const unsigned char **dn, size_t *dn_len,
+                   ot_x509_pkey *pk, int *ca);
 /* the server certificate's SubjectPublicKeyInfo (DER, whole); 0 when it is not kept */
 int ot_x509_spki(const struct ot_x509 *x, const unsigned char **spki, size_t *len);
 
@@ -218,7 +243,7 @@ struct OTContext {
     char *alpn;                      /* default list, or NULL */
     struct ot_anchors extra;         /* CAFile and OT_AddTrust*() */
     void *lock;
-    br_x509_trust_anchor *merged;    /* system + extra, made at first need */
+    ot_x509_trust_anchor *merged;    /* system + extra, made at first need */
     size_t merged_count;
     int merged_ok;
     int system_missing;
@@ -227,8 +252,17 @@ struct OTContext {
 struct ot13_ticket;
 struct ot13;
 
+/* a TLS 1.2 session: what resuming it by its ID takes */
+struct ot12_session {
+    unsigned char session_id[32];
+    unsigned char session_id_len;
+    uint16_t version;                        /* 0 until the handshake has its master secret */
+    uint16_t cipher_suite;
+    unsigned char master_secret[48];
+};
+
 struct OTSession {
-    br_ssl_session_parameters params;        /* TLS 1.2 and older */
+    struct ot12_session params;              /* TLS 1.2 */
     char host[OT_HOST_MAX + 1];
     struct ot13_ticket *t13;                 /* TLS 1.3: the newest ticket, or NULL */
     struct OTConnection *source;             /* still waiting for one from it */
@@ -243,7 +277,6 @@ void ot_session_unlock(void);
 enum { OTS_NEW, OTS_HANDSHAKE, OTS_OPEN, OTS_CLOSED, OTS_FAILED };
 
 struct OTConnection {
-    br_ssl_client_context cc;        /* first: BearSSL's engine */
     struct ot_x509 x509;
     struct ot_impls impls;
     struct OTContext *ctx;
@@ -266,7 +299,8 @@ struct OTConnection {
     int pinned;
     unsigned char pin[32];
     int offer_session;
-    br_ssl_session_parameters offered;
+    struct ot12_session offered;
+    struct ot12_session session12;   /* this connection's TLS 1.2 session */
     struct ot13_ticket *offer13;     /* a TLS 1.3 ticket to offer, or NULL */
     LONG min_version, max_version;   /* the context's, or OT_SetVersion's */
     struct ot13 *t13;                /* the TLS 1.3 client (ot_tls13.c), once started */

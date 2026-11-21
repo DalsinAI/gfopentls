@@ -62,7 +62,7 @@ if(Python3_FOUND)
     endif()
 endif()
 
-# ---- GFOpenTLS on BearSSL (third_party/bearssl, MIT), for the host tests ----
+# ---- BearSSL (third_party/bearssl, MIT): the unit tests' reference only ----
 file(GLOB BEARSSL_SRC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bearssl/src/*/*.c
                       ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bearssl/src/*.c)
 add_library(bearssl STATIC ${BEARSSL_SRC})
@@ -72,13 +72,12 @@ target_include_directories(bearssl PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_part
 add_library(opentls STATIC
     src/opentls/ot_core.c src/opentls/ot_glue.c src/opentls/ot_platform.c
     src/opentls/ot_random.c src/opentls/ot_trust.c src/opentls/ot_x509.c
-    src/opentls/ot_tls13.c src/opentls/ot_tls13_keys.c src/opentls/ot_tls13_bridge.c
-    src/opentls/ot_service.c)
+    src/opentls/ot_tls13.c src/opentls/ot_tls13_keys.c
+    src/opentls/ot_service.c src/opentls/ot_hmac.c)
 target_include_directories(opentls PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/host/include
-                                          ${CMAKE_CURRENT_SOURCE_DIR}/include
-                                   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bearssl/src)
+                                          ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_options(opentls PRIVATE -Wall -Wextra -Werror)
-target_link_libraries(opentls PUBLIC bearssl opencrypto)
+target_link_libraries(opentls PUBLIC opencrypto)
 
 add_executable(opentls_client tests/opentls_client.c)
 target_link_libraries(opentls_client PRIVATE opentls)
@@ -90,28 +89,18 @@ if(OPENSSL_FOUND)
                    tests/service_host/opentls_key.c)
     target_compile_definitions(opentls_client_svc PRIVATE OT_TEST_SERVICE)
     target_include_directories(opentls_client_svc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/service_host
-                               ${CMAKE_CURRENT_SOURCE_DIR}/src/opentls ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bearssl/src)
+                               ${CMAKE_CURRENT_SOURCE_DIR}/src/opentls)
     target_link_libraries(opentls_client_svc PRIVATE opentls OpenSSL::Crypto)
 endif()
 add_executable(opentls_ftps_get tests/opentls_ftps_get.c)
 target_link_libraries(opentls_ftps_get PRIVATE opentls)
-# BearSSL's own hash code under other names (tests/bearssl_hash_ref.h): the
-# reference the unit tests hold ot_glue.c's hashes to, since ot_glue.c now
-# defines BearSSL's hash names over GFOpenCrypto
-add_library(bearssl_hash_ref STATIC
-    third_party/bearssl/src/hash/md5.c third_party/bearssl/src/hash/sha1.c
-    third_party/bearssl/src/hash/sha2small.c third_party/bearssl/src/hash/sha2big.c)
-target_include_directories(bearssl_hash_ref PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bearssl/inc
-                                                    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bearssl/src)
-target_compile_options(bearssl_hash_ref PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/tests/bearssl_hash_ref.h)
 add_executable(test_opentls_units tests/test_opentls_units.c)
 target_include_directories(test_opentls_units PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/opentls
                                                       ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bearssl/src)
-target_link_libraries(test_opentls_units PRIVATE opentls bearssl_hash_ref)
+target_link_libraries(test_opentls_units PRIVATE opentls bearssl)
 
 add_executable(test_tls13_vectors tests/test_tls13_vectors.c)
-target_include_directories(test_tls13_vectors PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/opentls
-                                                      ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bearssl/src)
+target_include_directories(test_tls13_vectors PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/opentls)
 target_link_libraries(test_tls13_vectors PRIVATE opentls)
 
 add_test(NAME opentls_units COMMAND test_opentls_units)
@@ -126,12 +115,6 @@ if(Python3_FOUND)
     add_test(NAME opentls_local_servers
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tls_local.py
                      $<TARGET_FILE:opentls_client> $<TARGET_FILE:opentls_ftps_get>)
-    # the same with TLS 1.2 by BearSSL, as before our own TLS 1.2 (DESIGN.md section 15)
-    add_test(NAME opentls_local_servers_bearssl12
-             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tls_local.py
-                     $<TARGET_FILE:opentls_client> $<TARGET_FILE:opentls_ftps_get>)
-    set_tests_properties(opentls_local_servers_bearssl12 PROPERTIES
-                         ENVIRONMENT "OPENTLS_TEST_TLS12_BEARSSL=1;OPENTLS_TEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/tls-local-bearssl12")
     if(OPENSSL_FOUND)
         # the key work on the services card (DESIGN.md section 15, step 2)
         add_test(NAME opentls_local_servers_service
