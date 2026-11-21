@@ -15,8 +15,8 @@
 
 #include "ot_types.h"
 
-#define OT_LIB_VERSION   1
-#define OT_LIB_REVISION  8          /* 1.1: OT_GetPeerName; 1.2: S:GFOpenTLS/ca-bundle.pem, ENVARC:GFOpenTLS/certs/;
+#define OT_LIB_VERSION   2          /* 2.0: no BearSSL; TLS 1.2 and 1.3 only */
+#define OT_LIB_REVISION  0          /* 1.1: OT_GetPeerName; 1.2: S:GFOpenTLS/ca-bundle.pem, ENVARC:GFOpenTLS/certs/;
                                        1.3: TLS 1.3, OT_SetVersion, OT_SessionHasTicket;
                                        1.4: all maths in gfopencrypto.library 2.3, none of BearSSL's;
                                        1.5: OTV_REPORT, the whole chain, certificate fields, group and MAC names;

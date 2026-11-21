@@ -97,6 +97,16 @@ Ed25519 signatures anywhere in the chain, path length and key usage
 constraints, and serverAuth. The CN is used only without dNSNames.
 Step 3 of DESIGN.md section 15.
 
+`gfopentls.library` 2.0 (21 November 2026): no BearSSL. Every connection is
+our own client: TLS 1.3, and TLS 1.2 with all 20 of its suites (ECDHE or
+RSA key exchange, AES-GCM, ChaCha20-Poly1305, and AES-CBC with HMAC). TLS
+1.0 and 1.1 are gone: a minimum below 1.2 is raised to 1.2, and a maximum
+below it is `OTERR_UNSUPPORTED`. HMAC, the random generator, the PEM reader
+and the trust anchors are ours as well. The library is 106 KB, down from
+141 KB. `third_party/bearssl` stays only as the host unit tests' reference.
+Programs that open version 1 get 2.0 unchanged, apart from TLS 1.0 and 1.1.
+Step 4 of DESIGN.md section 15.
+
 Link stubs (6 November 2026), for programs that want the C calls and
 not the library bases:
 
