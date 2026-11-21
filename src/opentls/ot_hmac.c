@@ -3,22 +3,22 @@
  * MIT licensed and free. Copyright (c) 2026 AmiCradle Team. */
 #include "ot_internal.h"
 
-static size_t block_of(const br_hash_class *h)
+static size_t block_of(const ot_hash_class *h)
 {
-    return (size_t)1 << ((h->desc >> BR_HASHDESC_LBLEN_OFF) & BR_HASHDESC_LBLEN_MASK);
+    return (size_t)1 << ((h->desc >> OT_HASHDESC_LBLEN_OFF) & OT_HASHDESC_LBLEN_MASK);
 }
 
-static size_t out_of(const br_hash_class *h)
+static size_t out_of(const ot_hash_class *h)
 {
-    return (h->desc >> BR_HASHDESC_OUT_OFF) & BR_HASHDESC_OUT_MASK;
+    return (h->desc >> OT_HASHDESC_OUT_OFF) & OT_HASHDESC_OUT_MASK;
 }
 
-void ot_hmac_key_init(struct ot_hmac_key *k, const br_hash_class *h, const void *key, size_t len)
+void ot_hmac_key_init(struct ot_hmac_key *k, const ot_hash_class *h, const void *key, size_t len)
 {
     memset(k, 0, sizeof *k);
     k->h = h;
     if (len > block_of(h)) {
-        br_hash_compat_context c;
+        ot_hash_compat_context c;
         h->init(&c.vtable);
         h->update(&c.vtable, key, len);
         h->out(&c.vtable, k->key);
@@ -27,7 +27,7 @@ void ot_hmac_key_init(struct ot_hmac_key *k, const br_hash_class *h, const void 
     }
 }
 
-static void pad_in(const struct ot_hmac_key *k, br_hash_compat_context *c, unsigned char x)
+static void pad_in(const struct ot_hmac_key *k, ot_hash_compat_context *c, unsigned char x)
 {
     unsigned char b[128];
     size_t i, n = block_of(k->h);
@@ -50,8 +50,8 @@ void ot_hmac_update(struct ot_hmac *m, const void *data, size_t len)
 
 size_t ot_hmac_out(struct ot_hmac *m, void *out)
 {
-    const br_hash_class *h = m->key->h;
-    br_hash_compat_context outer;
+    const ot_hash_class *h = m->key->h;
+    ot_hash_compat_context outer;
     unsigned char t[64];
     size_t n = out_of(h);
     h->out(&m->inner.vtable, t);
@@ -69,7 +69,7 @@ static void mac2(const unsigned char k[32], const unsigned char *a, size_t al, c
 {
     struct ot_hmac_key key;
     struct ot_hmac m;
-    ot_hmac_key_init(&key, &br_sha256_vtable, k, 32);
+    ot_hmac_key_init(&key, &ot_sha256_vtable, k, 32);
     ot_hmac_init(&m, &key);
     ot_hmac_update(&m, a, al);
     if (bl) ot_hmac_update(&m, b, bl);

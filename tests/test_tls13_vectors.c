@@ -42,23 +42,23 @@ static int same(const unsigned char *a, const char *want)
 /* the SHA-256 of the concatenation of the messages given (NULL-terminated) */
 static void thash(unsigned char *out, ...)
 {
-    br_sha256_context h;
+    ot_sha256_context h;
     va_list ap;
     const char *m;
-    br_sha256_init(&h);
+    ot_sha256_init(&h);
     va_start(ap, out);
     while ((m = va_arg(ap, const char *)) != NULL) {
         struct buf b = hex(m);
-        br_sha256_update(&h, b.p, b.n);
+        ot_sha256_update(&h, b.p, b.n);
         free(b.p);
     }
     va_end(ap);
-    br_sha256_out(&h, out);
+    ot_sha256_out(&h, out);
 }
 
 static void test_rfc8448_s3(const struct ot_impls *m)
 {
-    const br_hash_class *h = &br_sha256_vtable;
+    const ot_hash_class *h = &ot_sha256_vtable;
     const struct ot13_suite *s = ot13_suite(OT13_AES_128_GCM_SHA256);
     struct buf priv = hex(RFC8448_C_X25519_PRIV), spub = hex(RFC8448_S_X25519_PUB);
     unsigned char g[32], early[32], derived[32], hs[32], th[32], c_hs[32], s_hs[32], master[32];
@@ -70,7 +70,7 @@ static void test_rfc8448_s3(const struct ot_impls *m)
 
     /* (EC)DHE */
     memcpy(g, spub.p, 32);
-    CHECK(m->ec->mul(g, 32, priv.p, 32, BR_EC_curve25519), "X25519");
+    CHECK(m->ec->mul(g, 32, priv.p, 32, OT_EC_curve25519), "X25519");
     CHECK(same(g, RFC8448_ECDHE), "X25519 shared secret");
 
     /* the handshake secrets */
@@ -95,19 +95,19 @@ static void test_rfc8448_s3(const struct ot_impls *m)
     rec = hex(RFC8448_S_FLIGHT_REC);
     flight = hex(RFC8448_S_FLIGHT);
     CHECK(ot13_open(&k, rec.p, rec.n, &type, &len) == 0, "server flight opens");
-    CHECK(type == BR_SSL_HANDSHAKE && len == flight.n && !memcmp(rec.p + 5, flight.p, len), "server flight");
+    CHECK(type == OT_SSL_HANDSHAKE && len == flight.n && !memcmp(rec.p + 5, flight.p, len), "server flight");
     /* and sealed again, the same */
     CHECK(ot13_keys_set(&k, s, m, s_hs) == 0, "keys");
     {
         unsigned char *again = malloc(flight.n + 5 + 17);
         struct buf want = hex(RFC8448_S_FLIGHT_REC);
         memcpy(again + 5, flight.p, flight.n);
-        CHECK(ot13_seal(&k, again, BR_SSL_HANDSHAKE, flight.n) == want.n && !memcmp(again, want.p, want.n),
+        CHECK(ot13_seal(&k, again, OT_SSL_HANDSHAKE, flight.n) == want.n && !memcmp(again, want.p, want.n),
               "server flight sealed");
         /* one bit changed: refused */
         CHECK(ot13_keys_set(&k, s, m, s_hs) == 0, "keys");
         again[20] ^= 1;
-        CHECK(ot13_open(&k, again, want.n, &type, &len) == BR_ERR_BAD_MAC, "a changed record is refused");
+        CHECK(ot13_open(&k, again, want.n, &type, &len) == OT_ERR_BAD_MAC, "a changed record is refused");
         free(again);
         free(want.p);
     }
@@ -119,8 +119,8 @@ static void test_rfc8448_s3(const struct ot_impls *m)
     {
         struct buf n = hex(RFC8448_RSA_N);
         static const unsigned char e[] = { 1, 0, 1 };
-        br_x509_pkey pk;
-        pk.key_type = BR_KEYTYPE_RSA;
+        ot_x509_pkey pk;
+        pk.key_type = OT_KEYTYPE_RSA;
         pk.key.rsa.n = n.p;
         pk.key.rsa.nlen = n.n;
         pk.key.rsa.e = (unsigned char *)e;
@@ -129,10 +129,10 @@ static void test_rfc8448_s3(const struct ot_impls *m)
         CHECK(ot13_verify_cv(NULL, m, 0x0804, &pk, NULL, th, 32, cv.p + 8, get16be(cv.p + 6)) == 0,
               "CertificateVerify verifies");
         cv.p[20] ^= 0x10;
-        CHECK(ot13_verify_cv(NULL, m, 0x0804, &pk, NULL, th, 32, cv.p + 8, get16be(cv.p + 6)) == BR_ERR_BAD_SIGNATURE,
+        CHECK(ot13_verify_cv(NULL, m, 0x0804, &pk, NULL, th, 32, cv.p + 8, get16be(cv.p + 6)) == OT_ERR_BAD_SIGNATURE,
               "a changed CertificateVerify does not");
         cv.p[20] ^= 0x10;
-        CHECK(ot13_verify_cv(NULL, m, 0x0403, &pk, NULL, th, 32, cv.p + 8, get16be(cv.p + 6)) == BR_ERR_INVALID_ALGORITHM,
+        CHECK(ot13_verify_cv(NULL, m, 0x0403, &pk, NULL, th, 32, cv.p + 8, get16be(cv.p + 6)) == OT_ERR_INVALID_ALGORITHM,
               "ECDSA scheme with an RSA key");
         free(n.p);
     }
@@ -153,7 +153,7 @@ static void test_rfc8448_s3(const struct ot_impls *m)
         struct buf msg = hex(RFC8448_C_FIN_MSG), want = hex(RFC8448_C_FIN_REC);
         unsigned char r[128];
         memcpy(r + 5, msg.p, msg.n);
-        CHECK(ot13_seal(&k, r, BR_SSL_HANDSHAKE, msg.n) == want.n && !memcmp(r, want.p, want.n),
+        CHECK(ot13_seal(&k, r, OT_SSL_HANDSHAKE, msg.n) == want.n && !memcmp(r, want.p, want.n),
               "client Finished record");
         free(msg.p);
         free(want.p);
@@ -175,7 +175,7 @@ static void test_rfc8448_s3(const struct ot_impls *m)
     CHECK(same(k.key, RFC8448_S_AP_KEY) && same(k.iv, RFC8448_S_AP_IV), "server application key and IV");
     {
         struct buf r = hex(RFC8448_NST_REC), nst = hex(RFC8448_NST);
-        CHECK(ot13_open(&k, r.p, r.n, &type, &len) == 0 && type == BR_SSL_HANDSHAKE && len == nst.n
+        CHECK(ot13_open(&k, r.p, r.n, &type, &len) == 0 && type == OT_SSL_HANDSHAKE && len == nst.n
               && !memcmp(r.p + 5, nst.p, len), "NewSessionTicket record");
         free(r.p);
         free(nst.p);
@@ -186,7 +186,7 @@ static void test_rfc8448_s3(const struct ot_impls *m)
         struct buf msg = hex(i ? RFC8448_C_ALERT : RFC8448_C_APP), want = hex(i ? RFC8448_C_ALERT_REC : RFC8448_C_APP_REC);
         unsigned char r[128];
         memcpy(r + 5, msg.p, msg.n);
-        CHECK(ot13_seal(&k, r, i ? BR_SSL_ALERT : BR_SSL_APPLICATION_DATA, msg.n) == want.n
+        CHECK(ot13_seal(&k, r, i ? OT_SSL_ALERT : OT_SSL_APPLICATION_DATA, msg.n) == want.n
               && !memcmp(r, want.p, want.n), i ? "close_notify record (sequence 1)" : "application data record");
         free(msg.p);
         free(want.p);
@@ -196,7 +196,7 @@ static void test_rfc8448_s3(const struct ot_impls *m)
 
 static void test_rfc8448_s4(void)
 {
-    const br_hash_class *h = &br_sha256_vtable;
+    const ot_hash_class *h = &ot_sha256_vtable;
     struct buf psk = hex(RFC8448_R_PSK);
     unsigned char early[32], bkey[32], th[32], binder[32];
     ot13_extract(h, NULL, psk.p, psk.n, early);
@@ -212,32 +212,32 @@ static void test_rfc8448_s4(void)
 
 static void test_rfc8448_s5(const struct ot_impls *m)
 {
-    const br_hash_class *h = &br_sha256_vtable;
+    const ot_hash_class *h = &ot_sha256_vtable;
     struct buf priv = hex(RFC8448_H_C_P256_PRIV), spub = hex(RFC8448_H_S_P256_PUB);
     unsigned char pub[65], g[65], ch1[4 + 32], th[32], early[32], derived[32], hs[32], c_hs[32];
-    br_sha256_context t;
+    ot_sha256_context t;
     size_t xlen, xoff;
-    CHECK(m->ec->mulgen(pub, priv.p, 32, BR_EC_secp256r1) == 65 && same(pub, RFC8448_H_C_P256_PUB),
+    CHECK(m->ec->mulgen(pub, priv.p, 32, OT_EC_secp256r1) == 65 && same(pub, RFC8448_H_C_P256_PUB),
           "P-256 public key");
     memcpy(g, spub.p, 65);
-    CHECK(m->ec->mul(g, 65, priv.p, 32, BR_EC_secp256r1), "P-256");
-    xoff = m->ec->xoff(BR_EC_secp256r1, &xlen);
+    CHECK(m->ec->mul(g, 65, priv.p, 32, OT_EC_secp256r1), "P-256");
+    xoff = m->ec->xoff(OT_EC_secp256r1, &xlen);
     CHECK(xlen == 32 && same(g + xoff, RFC8448_H_ECDHE), "P-256 shared secret");
     /* the transcript after a HelloRetryRequest: message_hash(ClientHello1) */
     thash(ch1 + 4, RFC8448_H_CH1, (char *)NULL);
     ch1[0] = 254; ch1[1] = 0; ch1[2] = 0; ch1[3] = 32;
-    br_sha256_init(&t);
-    br_sha256_update(&t, ch1, sizeof ch1);
+    ot_sha256_init(&t);
+    ot_sha256_update(&t, ch1, sizeof ch1);
     {
         const char *rest[3] = { RFC8448_H_HRR, RFC8448_H_CH2, RFC8448_H_SH };
         int i;
         for (i = 0; i < 3; ++i) {
             struct buf b = hex(rest[i]);
-            br_sha256_update(&t, b.p, b.n);
+            ot_sha256_update(&t, b.p, b.n);
             free(b.p);
         }
     }
-    br_sha256_out(&t, th);
+    ot_sha256_out(&t, th);
     CHECK(same(th, RFC8448_H_THASH_SH), "transcript after HelloRetryRequest");
     ot13_extract(h, NULL, NULL, 0, early);
     ot13_derive(h, early, "derived", NULL, derived);
@@ -268,14 +268,14 @@ static void test_cross(const struct ot_impls *a, const struct ot_impls *b)
             for (i = 0; i < 5; ++i) {
                 size_t sz = sizes[i];
                 memcpy(rec + 5, plain, sz);
-                len = ot13_seal(&w, rec, BR_SSL_APPLICATION_DATA, sz);
+                len = ot13_seal(&w, rec, OT_SSL_APPLICATION_DATA, sz);
                 CHECK(len == 5 + sz + 17, "record length");
                 if (sz == 0) {     /* empty content: the type alone, then nothing after it */
-                    CHECK(ot13_open(&r, rec, len, &type, &len) == 0 && type == BR_SSL_APPLICATION_DATA && len == 0,
+                    CHECK(ot13_open(&r, rec, len, &type, &len) == 0 && type == OT_SSL_APPLICATION_DATA && len == 0,
                           "empty record");
                     continue;
                 }
-                CHECK(ot13_open(&r, rec, len, &type, &len) == 0 && type == BR_SSL_APPLICATION_DATA && len == sz
+                CHECK(ot13_open(&r, rec, len, &type, &len) == 0 && type == OT_SSL_APPLICATION_DATA && len == sz
                       && !memcmp(rec + 5, plain, sz), "sealed by one table, opened by the other");
             }
             CHECK(ot13_keys_next(&w) == 0 && ot13_keys_next(&r) == 0, "next keys");
@@ -286,8 +286,8 @@ static void test_cross(const struct ot_impls *a, const struct ot_impls *b)
             struct ot13_keys old;
             CHECK(ot13_keys_set(&old, s, a, secret) == 0, "keys");
             memcpy(rec + 5, plain, 100);
-            len = ot13_seal(&old, rec, BR_SSL_APPLICATION_DATA, 100);
-            CHECK(ot13_open(&r, rec, len, &type, &len) == BR_ERR_BAD_MAC, "the old key is refused");
+            len = ot13_seal(&old, rec, OT_SSL_APPLICATION_DATA, 100);
+            CHECK(ot13_open(&r, rec, len, &type, &len) == OT_ERR_BAD_MAC, "the old key is refused");
         }
     }
 }
@@ -297,8 +297,8 @@ static void test_cross(const struct ot_impls *a, const struct ot_impls *b)
 static void test_cbc12(const struct ot_impls *m)
 {
     static const struct ot13_suite suites[] = {
-        { 0xC013, "ECDHE-RSA-AES128-SHA", 0, 16, &br_sha256_vtable, 32, &br_sha1_vtable, 20, 0, 0 },
-        { 0xC024, "ECDHE-ECDSA-AES256-SHA384", 0, 32, &br_sha384_vtable, 48, &br_sha384_vtable, 48, 0, 1 },
+        { 0xC013, "ECDHE-RSA-AES128-SHA", 0, 16, &ot_sha256_vtable, 32, &ot_sha1_vtable, 20, 0, 0 },
+        { 0xC024, "ECDHE-ECDSA-AES256-SHA384", 0, 32, &ot_sha384_vtable, 48, &ot_sha384_vtable, 48, 0, 1 },
     };
     unsigned char mac[48], key[32], rec[5 + 300 + OT12_OVERHEAD], copy[sizeof rec];
     size_t i, n, len, sizes[] = { 0, 1, 15, 16, 31, 200, 300 }, z;
@@ -311,18 +311,18 @@ static void test_cbc12(const struct ot_impls *m)
             CHECK(ot12_keys_set(&w, &suites[n], m, mac, key, NULL, 1) == 0, "write keys");
             CHECK(ot12_keys_set(&r, &suites[n], m, mac, key, NULL, 0) == 0, "read keys");
             for (i = 0; i < sizes[z]; ++i) rec[5 + i] = (unsigned char)(i ^ 0x5A);
-            rl = ot12_seal(&w, rec, BR_SSL_APPLICATION_DATA, sizes[z]);
+            rl = ot12_seal(&w, rec, OT_SSL_APPLICATION_DATA, sizes[z]);
             CHECK(rl > 5 + 16 + sizes[z] && (rl - 5 - 16) % 16 == 0, "sealed length");
             memcpy(copy, rec, rl);
             CHECK(ot12_open(&r, rec, rl, &len) == 0 && len == sizes[z], "opens");
             for (i = 0; i < len; ++i)
                 if (rec[5 + i] != (unsigned char)(i ^ 0x5A)) break;
             CHECK(i == len, "the content");
-            CHECK(ot12_open(&r, copy, rl, &len) == BR_ERR_BAD_MAC, "a replayed record (next sequence number)");
+            CHECK(ot12_open(&r, copy, rl, &len) == OT_ERR_BAD_MAC, "a replayed record (next sequence number)");
             memcpy(rec, copy, rl);
             rec[rl - 20] ^= 1;
             r.seq = 0;
-            CHECK(ot12_open(&r, rec, rl, &len) == BR_ERR_BAD_MAC, "a changed byte");
+            CHECK(ot12_open(&r, rec, rl, &len) == OT_ERR_BAD_MAC, "a changed byte");
             memcpy(rec, copy, rl);
             r.seq = 0;
             CHECK(ot12_open(&r, rec, rl - 16, &len) != 0, "a block short");

@@ -7,7 +7,6 @@
 #define OT_TLS13_H
 
 #include "ot_internal.h"
-#include "inner.h"      /* BearSSL's record types, br_ssl_engine_fail() */
 #include <gfopencrypto/gfopencrypto.h>
 
 #define OT13_HASH_MAX    48         /* SHA-384 */
@@ -27,10 +26,10 @@ struct ot13_suite {
     const char *name;
     int chacha;                      /* 1: ChaCha20-Poly1305, 0: AES-GCM or AES-CBC */
     size_t key_len;
-    const br_hash_class *hash;       /* the PRF's, or HKDF's */
+    const ot_hash_class *hash;       /* the PRF's, or HKDF's */
     size_t hash_len;
     /* TLS 1.2 only */
-    const br_hash_class *mac;        /* AES-CBC with HMAC of this hash; NULL for AEAD */
+    const ot_hash_class *mac;        /* AES-CBC with HMAC of this hash; NULL for AEAD */
     size_t mac_len;
     int rsa_kx;                      /* RSA key exchange, not ECDHE */
     int ecdsa;                       /* the server signs with ECDSA, not RSA */
@@ -40,18 +39,18 @@ const struct ot13_suite *ot13_suite(unsigned id);
 /* ---- the key schedule (RFC 8446 section 7.1) ---- */
 
 /* prk = HKDF-Extract(salt, ikm); a NULL salt is hash_len zeros */
-void ot13_extract(const br_hash_class *h, const unsigned char *salt,
+void ot13_extract(const ot_hash_class *h, const unsigned char *salt,
                   const unsigned char *ikm, size_t ikm_len, unsigned char *prk);
 /* HKDF-Expand-Label(secret, label, context, length) */
-void ot13_expand_label(const br_hash_class *h, const unsigned char *secret, const char *label,
+void ot13_expand_label(const ot_hash_class *h, const unsigned char *secret, const char *label,
                        const unsigned char *context, size_t context_len,
                        unsigned char *out, size_t out_len);
 /* Derive-Secret(secret, label, messages), with the messages' hash given;
  * NULL is the hash of no messages */
-void ot13_derive(const br_hash_class *h, const unsigned char *secret, const char *label,
+void ot13_derive(const ot_hash_class *h, const unsigned char *secret, const char *label,
                  const unsigned char *thash, unsigned char *out);
 /* verify_data of a Finished message: HMAC(finished_key(base), thash) */
-void ot13_finished(const br_hash_class *h, const unsigned char *base,
+void ot13_finished(const ot_hash_class *h, const unsigned char *base,
                    const unsigned char *thash, unsigned char *out);
 
 /* ---- record protection (section 5.2) ---- */
@@ -66,9 +65,9 @@ struct ot13_keys {
     unsigned char h[16];             /* GHASH's key: AES(key, 0) */
     unsigned char mac_key[48];       /* TLS 1.2 AES-CBC: HMAC's */
     union {
-        const br_block_ctr_class *vtable;
-        const br_block_cbcenc_class *cbcenc;
-        const br_block_cbcdec_class *cbcdec;
+        const ot_block_ctr_class *vtable;
+        const ot_block_cbcenc_class *cbcenc;
+        const ot_block_cbcdec_class *cbcdec;
         unsigned char any[256];      /* GFOpenCrypto's (ot_glue.c) is smaller */
     } ctr;
 };
@@ -83,14 +82,14 @@ void ot13_keys_clear(struct ot13_keys *k);
  * length is answered. rec needs len + 5 + 1 + 16 bytes. */
 size_t ot13_seal(struct ot13_keys *k, unsigned char *rec, int type, size_t len);
 /* Opens a record in place (header included, reclen bytes): the content
- * is then at rec + 5, *len bytes of *type. 0, or BR_ERR_BAD_MAC when it
- * does not decrypt, BR_ERR_BAD_PARAM when it is malformed. */
+ * is then at rec + 5, *len bytes of *type. 0, or OT_ERR_BAD_MAC when it
+ * does not decrypt, OT_ERR_BAD_PARAM when it is malformed. */
 int ot13_open(struct ot13_keys *k, unsigned char *rec, size_t reclen, int *type, size_t *len);
 
 /* ---- TLS 1.2 (RFC 5246, 5288, 7905) ---- */
 
 /* the PRF: P_hash(secret, label + seed), out_len bytes */
-void ot12_prf(const br_hash_class *h, const unsigned char *secret, size_t slen, const char *label,
+void ot12_prf(const ot_hash_class *h, const unsigned char *secret, size_t slen, const char *label,
               const unsigned char *seed, size_t seed_len, unsigned char *out, size_t out_len);
 #define OT12_OVERHEAD    80         /* the most a sealed record adds: AES-CBC's IV, HMAC-SHA384, padding */
 /**
@@ -109,7 +108,7 @@ int ot12_keys_set(struct ot13_keys *k, const struct ot13_suite *s, const struct 
  * 0 when AES-CBC's IV could not be drawn. */
 size_t ot12_seal(struct ot13_keys *k, unsigned char *rec, int type, size_t len);
 /* Opens a record in place (header included, reclen bytes): the content is
- * then at rec + 5, *len bytes. 0, BR_ERR_BAD_MAC or BR_ERR_BAD_PARAM. */
+ * then at rec + 5, *len bytes. 0, OT_ERR_BAD_MAC or OT_ERR_BAD_PARAM. */
 int ot12_open(struct ot13_keys *k, unsigned char *rec, size_t reclen, size_t *len);
 
 /* ---- tickets and sessions ---- */
@@ -147,7 +146,7 @@ struct ot13 {
     int st;
     int offer12;                     /* TLS 1.2 offered too */
     const struct ot13_suite *suite;
-    const br_hash_class *hash;       /* the suite's, once known */
+    const ot_hash_class *hash;       /* the suite's, once known */
     unsigned char random[32];
     unsigned char sid[32];
     size_t sid_len;
@@ -163,8 +162,8 @@ struct ot13 {
     unsigned long updates_sent, updates_received;   /* KeyUpdates */
     uint32_t update_after;           /* records under one key before ours */
     /* the transcript: both hashes until the server picks a suite */
-    br_sha256_context th256;
-    br_sha384_context th384;
+    ot_sha256_context th256;
+    ot_sha384_context th384;
     /* secrets */
     unsigned char hs_secret[OT13_HASH_MAX];
     unsigned char master[OT13_HASH_MAX];
@@ -224,12 +223,12 @@ struct ot13_ticket *ot13_ticket_copy(const struct ot13_ticket *t);
 void ot13_session_wait(struct OTConnection *c, struct OTSession *s);
 void ot13_session_unwait(struct OTSession *s);
 
-/* the signatures: CertificateVerify's (0 or a BR_ERR_* code; c NULL: all
+/* the signatures: CertificateVerify's (0 or a OT_ERR_* code; c NULL: all
  * here, none on the services card), and an RSA-PSS check of a hash (1 or 0) */
-int ot13_verify_cv(struct OTConnection *c, const struct ot_impls *m, unsigned scheme, const br_x509_pkey *pk,
+int ot13_verify_cv(struct OTConnection *c, const struct ot_impls *m, unsigned scheme, const ot_x509_pkey *pk,
                    const unsigned char *ed25519, const unsigned char *thash, size_t thlen,
                    const unsigned char *sig, size_t siglen);
-int ot13_rsa_pss(const struct ot_impls *m, const br_rsa_public_key *pk, const br_hash_class *h,
+int ot13_rsa_pss(const struct ot_impls *m, const ot_rsa_public_key *pk, const ot_hash_class *h,
                  const unsigned char *hash, const unsigned char *sig, size_t siglen);
 
 static inline unsigned get16be(const unsigned char *p) { return ((unsigned)p[0] << 8) | p[1]; }

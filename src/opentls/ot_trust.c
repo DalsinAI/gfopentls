@@ -10,22 +10,22 @@ static LONG add_der(struct ot_anchors *a, const unsigned char *der, size_t len)
 {
     const unsigned char *dn;
     size_t dn_len, need;
-    br_x509_pkey pk;
-    br_x509_trust_anchor *ta;
+    ot_x509_pkey pk;
+    ot_x509_trust_anchor *ta;
     unsigned char *block, *p;
     int ca;
 
     if (!ot_cert_anchor(der, len, &dn, &dn_len, &pk, &ca)) return 0;
     if (a->count == a->cap) {
         size_t cap = a->cap ? a->cap * 2 : 64;
-        br_x509_trust_anchor *n = ot_alloc(cap * sizeof *n);
+        ot_x509_trust_anchor *n = ot_alloc(cap * sizeof *n);
         if (!n) return OTERR_NOMEM;
         if (a->count) memcpy(n, a->ta, a->count * sizeof *n);
         ot_free(a->ta);
         a->ta = n;
         a->cap = cap;
     }
-    need = dn_len + (pk.key_type == BR_KEYTYPE_RSA ? pk.key.rsa.nlen + pk.key.rsa.elen : pk.key.ec.qlen);
+    need = dn_len + (pk.key_type == OT_KEYTYPE_RSA ? pk.key.rsa.nlen + pk.key.rsa.elen : pk.key.ec.qlen);
     block = ot_alloc(need);
     if (!block) return OTERR_NOMEM;
     ta = &a->ta[a->count];
@@ -33,10 +33,10 @@ static LONG add_der(struct ot_anchors *a, const unsigned char *der, size_t len)
     memcpy(block, dn, dn_len);
     ta->dn.data = block;
     ta->dn.len = dn_len;
-    ta->flags = ca ? BR_X509_TA_CA : 0;
+    ta->flags = ca ? OT_X509_TA_CA : 0;
     ta->pkey.key_type = pk.key_type;
     p = block + dn_len;
-    if (pk.key_type == BR_KEYTYPE_RSA) {
+    if (pk.key_type == OT_KEYTYPE_RSA) {
         memcpy(p, pk.key.rsa.n, pk.key.rsa.nlen);
         ta->pkey.key.rsa.n = p;
         ta->pkey.key.rsa.nlen = pk.key.rsa.nlen;

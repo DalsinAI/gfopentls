@@ -1,13 +1,14 @@
-/* GFOpenTLS unit tests: every function table GFOpenCrypto fills in for BearSSL
- * (ot_glue.c) against BearSSL's own, on random inputs (BearSSL's hashes as
- * ref_*: ot_glue.c now owns their names); and the address
- * parser, the session rules and the error names.
+/* GFOpenTLS unit tests: every function table ot_glue.c fills in from
+ * GFOpenCrypto against BearSSL's own (linked here only, as the
+ * reference), on random inputs; and the address parser, the session
+ * rules and the error names.
  * MIT licensed and free. Copyright (c) 2026 AmiCradle Team. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "ot_internal.h"
 #include "ot_tls13.h"
+#include "bearssl.h"
 #include <clib/gfopentls_protos.h>
 
 static int failures;
@@ -17,22 +18,20 @@ static br_hmac_drbg_context rng;
 static void rnd(void *p, size_t n) { br_hmac_drbg_generate(&rng, p, n); }
 static size_t rnd_below(size_t n) { uint32_t v; rnd(&v, sizeof v); return n ? v % n : 0; }
 
-extern const br_hash_class ref_md5_vtable, ref_sha1_vtable, ref_sha224_vtable,
-                           ref_sha256_vtable, ref_sha384_vtable, ref_sha512_vtable;
-
 static void test_hashes(const struct ot_impls *m)
 {
-    const br_hash_class *mine[6] = { &br_md5_vtable, &br_sha1_vtable, &br_sha224_vtable,
+    const ot_hash_class *mine[6] = { &ot_md5_vtable, &ot_sha1_vtable, &ot_sha224_vtable,
                                      m->sha256, m->sha384, m->sha512 };
-    const br_hash_class *ref[6] = { &ref_md5_vtable, &ref_sha1_vtable, &ref_sha224_vtable,
-                                    &ref_sha256_vtable, &ref_sha384_vtable, &ref_sha512_vtable };
+    const br_hash_class *ref[6] = { &br_md5_vtable, &br_sha1_vtable, &br_sha224_vtable,
+                                    &br_sha256_vtable, &br_sha384_vtable, &br_sha512_vtable };
     static unsigned char data[3000];
     int k, round;
     for (k = 0; k < 6; ++k) {
         size_t stlen = (ref[k]->desc >> BR_HASHDESC_STATE_OFF) & BR_HASHDESC_STATE_MASK;
         CHECK(mine[k]->desc == ref[k]->desc && mine[k]->context_size == ref[k]->context_size, "hash class");
         for (round = 0; round < 200; ++round) {
-            br_hash_compat_context a, b;
+            ot_hash_compat_context a;
+            br_hash_compat_context b;
             unsigned char oa[64], ob[64], sa[64], sb[64];
             size_t len = rnd_below(sizeof data), cut = rnd_below(len + 1), done;
             uint64_t ca, cb;
@@ -75,9 +74,12 @@ static void test_aes(const struct ot_impls *m)
 {
     int round;
     for (round = 0; round < 200; ++round) {
-        br_aes_gen_cbcenc_keys ea, eb;
-        br_aes_gen_cbcdec_keys da, db;
-        br_aes_gen_ctr_keys ta, tb;
+        union { const ot_block_cbcenc_class *vtable; unsigned char any[256]; } ea;
+        union { const ot_block_cbcdec_class *vtable; unsigned char any[256]; } da;
+        union { const ot_block_ctr_class *vtable; unsigned char any[256]; } ta;
+        br_aes_gen_cbcenc_keys eb;
+        br_aes_gen_cbcdec_keys db;
+        br_aes_gen_ctr_keys tb;
         unsigned char key[32], iva[16], ivb[16], a[1024], b[1024];
         size_t klen = 16 + 8 * rnd_below(3), blocks = 1 + rnd_below(60), len = 16 * blocks;
         uint32_t cc, ra, rb;
@@ -214,13 +216,13 @@ static void test_rsa(const struct ot_impls *m)
     for (round = 0; round < 20; ++round) {
         rnd(hash, 32);
         CHECK(br_rsa_i31_pkcs1_sign(BR_HASH_OID_SHA256, hash, 32, &sk, sig), "RSA sign");
-        CHECK(m->rsa_vrfy(sig, 256, BR_HASH_OID_SHA256, 32, &pk, out) && !memcmp(out, hash, 32), "RSA verify");
+        CHECK(m->rsa_vrfy(sig, 256, BR_HASH_OID_SHA256, 32, (const ot_rsa_public_key *)&pk, out) && !memcmp(out, hash, 32), "RSA verify");
         sig[rnd_below(256)] ^= 1;
-        CHECK(!m->rsa_vrfy(sig, 256, BR_HASH_OID_SHA256, 32, &pk, out) || memcmp(out, hash, 32), "RSA altered");
+        CHECK(!m->rsa_vrfy(sig, 256, BR_HASH_OID_SHA256, 32, (const ot_rsa_public_key *)&pk, out) || memcmp(out, hash, 32), "RSA altered");
         rnd(x, 256);
         x[0] &= 0x3F;
         memcpy(y, x, 256);
-        CHECK(m->rsa_pub(x, 256, &pk) && br_rsa_i31_public(y, 256, &pk) && !memcmp(x, y, 256), "RSA public");
+        CHECK(m->rsa_pub(x, 256, (const ot_rsa_public_key *)&pk) && br_rsa_i31_public(y, 256, &pk) && !memcmp(x, y, 256), "RSA public");
     }
 }
 
@@ -243,9 +245,9 @@ static void test_ecdsa(const struct ot_impls *m)
             rnd(hash, sizeof hash);
             slen = br_ecdsa_i31_sign_asn1(&br_ec_all_m31, &br_sha384_vtable, hash, &sk, sig);
             CHECK(slen > 0, "ECDSA sign");
-            CHECK(m->ecdsa_vrfy(m->ec, hash, 48, &pk, sig, slen) == 1, "ECDSA verify");
+            CHECK(m->ecdsa_vrfy(m->ec, hash, 48, (const ot_ec_public_key *)&pk, sig, slen) == 1, "ECDSA verify");
             hash[0] ^= 1;
-            CHECK(m->ecdsa_vrfy(m->ec, hash, 48, &pk, sig, slen) == 0, "ECDSA altered");
+            CHECK(m->ecdsa_vrfy(m->ec, hash, 48, (const ot_ec_public_key *)&pk, sig, slen) == 0, "ECDSA altered");
         }
     }
 }
@@ -364,7 +366,7 @@ int main(void)
     br_hmac_drbg_init(&rng, &br_sha256_vtable, seed, sizeof seed);
     ot_glue_select(&m, 1);
     ot_glue_select(&plain, 0);
-    CHECK(!memcmp(&m, &plain, sizeof m) && m.sha256 == &br_sha256_vtable
+    CHECK(!memcmp(&m, &plain, sizeof m) && m.sha256 == &ot_sha256_vtable
           && m.chacha20 != br_chacha20_ct_run, "GFOpenCrypto's, offload or not");
     test_hashes(&m);
     test_aes(&m);

@@ -51,7 +51,7 @@ static void take_sample(struct ot_sample *s, ULONG counter)
 
 static int gather(unsigned char out[32], int rounds)
 {
-    br_sha256_context h;
+    ot_sha256_context h;
     struct ot_sample s;
     int i;
     if (!ot_timer_open) {
@@ -60,12 +60,12 @@ static int gather(unsigned char out[32], int rounds)
             ot_timer_open = 1;
         }
     }
-    br_sha256_init(&h);
+    ot_sha256_init(&h);
     for (i = 0; i < rounds; ++i) {
         take_sample(&s, (ULONG)i);
-        br_sha256_update(&h, &s, sizeof s);
+        ot_sha256_update(&h, &s, sizeof s);
     }
-    br_sha256_out(&h, out);
+    ot_sha256_out(&h, out);
     return TimerBase != NULL;
 }
 

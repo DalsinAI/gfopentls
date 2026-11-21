@@ -7,7 +7,7 @@
  * the machine offers it (AmiCradle) and as its own 68k code everywhere
  * else; for the host tests over GFOpenCrypto's portable C. BearSSL's own
  * crypto code is not linked: this file defines the hash names BearSSL's
- * protocol code calls (br_md5_*, br_sha1_*, br_sha224/256/384/512_*), with
+ * protocol code calls (ot_md5_*, ot_sha1_*, ot_sha224/256/384/512_*), with
  * BearSSL's context layouts and state encodings, so that HMAC, the PRFs,
  * the multihash and X.509 work unchanged.
  *
@@ -329,77 +329,77 @@ static void md_out(ot_blocks_fn blocks, size_t bl, int le, size_t stlen,
 }
 
 #define OT_HASH(name, ctxtype, blocks, bl, le, stlen, outlen, iv) \
-void br_##name##_init(ctxtype *ctx) \
+void ot_##name##_init(ctxtype *ctx) \
 { \
-    ctx->vtable = &br_##name##_vtable; \
+    ctx->vtable = &ot_##name##_vtable; \
     memcpy(ctx->val, iv, stlen); \
     ctx->count = 0; \
 } \
-void br_##name##_update(ctxtype *ctx, const void *data, size_t len) \
+void ot_##name##_update(ctxtype *ctx, const void *data, size_t len) \
 { md_update(blocks, bl, ctx->buf, &ctx->count, (unsigned char *)ctx->val, data, len); } \
-void br_##name##_out(const ctxtype *ctx, void *out) \
+void ot_##name##_out(const ctxtype *ctx, void *out) \
 { md_out(blocks, bl, le, stlen, ctx->buf, ctx->count, (const unsigned char *)ctx->val, out, outlen); } \
-uint64_t br_##name##_state(const ctxtype *ctx, void *out) \
+uint64_t ot_##name##_state(const ctxtype *ctx, void *out) \
 { memcpy(out, ctx->val, stlen); return ctx->count; } \
-void br_##name##_set_state(ctxtype *ctx, const void *stb, uint64_t count) \
+void ot_##name##_set_state(ctxtype *ctx, const void *stb, uint64_t count) \
 { memcpy(ctx->val, stb, stlen); ctx->count = count; }
 
 /* BearSSL defines the SHA-256 and SHA-512 update, state and set_state as
  * SHA-224's and SHA-384's (bearssl_hash.h); each has its own init and out */
-#undef br_sha256_update
-#undef br_sha256_state
-#undef br_sha256_set_state
-#undef br_sha512_update
-#undef br_sha512_state
-#undef br_sha512_set_state
+#undef ot_sha256_update
+#undef ot_sha256_state
+#undef ot_sha256_set_state
+#undef ot_sha512_update
+#undef ot_sha512_state
+#undef ot_sha512_set_state
 
-OT_HASH(md5, br_md5_context, g_md5_blocks, 64, 1, 16, 16, iv_md5)
-OT_HASH(sha1, br_sha1_context, g_sha1_blocks, 64, 0, 20, 20, iv_sha1)
-OT_HASH(sha224, br_sha224_context, g_sha256_blocks, 64, 0, 32, 28, iv_sha224)
-OT_HASH(sha384, br_sha384_context, g_sha512_blocks, 128, 0, 64, 48, iv_sha384)
+OT_HASH(md5, ot_md5_context, g_md5_blocks, 64, 1, 16, 16, iv_md5)
+OT_HASH(sha1, ot_sha1_context, g_sha1_blocks, 64, 0, 20, 20, iv_sha1)
+OT_HASH(sha224, ot_sha224_context, g_sha256_blocks, 64, 0, 32, 28, iv_sha224)
+OT_HASH(sha384, ot_sha384_context, g_sha512_blocks, 128, 0, 64, 48, iv_sha384)
 
-void br_sha256_init(br_sha256_context *ctx)
+void ot_sha256_init(ot_sha256_context *ctx)
 {
-    ctx->vtable = &br_sha256_vtable;
+    ctx->vtable = &ot_sha256_vtable;
     memcpy(ctx->val, iv_sha256, 32);
     ctx->count = 0;
 }
-void br_sha256_out(const br_sha256_context *ctx, void *out)
+void ot_sha256_out(const ot_sha256_context *ctx, void *out)
 { md_out(g_sha256_blocks, 64, 0, 32, ctx->buf, ctx->count, (const unsigned char *)ctx->val, out, 32); }
-void br_sha512_init(br_sha512_context *ctx)
+void ot_sha512_init(ot_sha512_context *ctx)
 {
-    ctx->vtable = &br_sha512_vtable;
+    ctx->vtable = &ot_sha512_vtable;
     memcpy(ctx->val, iv_sha512, 64);
     ctx->count = 0;
 }
-void br_sha512_out(const br_sha512_context *ctx, void *out)
+void ot_sha512_out(const ot_sha512_context *ctx, void *out)
 { md_out(g_sha512_blocks, 128, 0, 64, ctx->buf, ctx->count, (const unsigned char *)ctx->val, out, 64); }
 
 #define OT_HASH_CLASS(name, ctxtype, upd, st, setst, desc) \
-const br_hash_class br_##name##_vtable = { \
+const ot_hash_class ot_##name##_vtable = { \
     sizeof(ctxtype), desc, \
-    (void (*)(const br_hash_class **))&br_##name##_init, \
-    (void (*)(const br_hash_class **, const void *, size_t))&upd, \
-    (void (*)(const br_hash_class *const *, void *))&br_##name##_out, \
-    (uint64_t (*)(const br_hash_class *const *, void *))&st, \
-    (void (*)(const br_hash_class **, const void *, uint64_t))&setst \
+    (void (*)(const ot_hash_class **))&ot_##name##_init, \
+    (void (*)(const ot_hash_class **, const void *, size_t))&upd, \
+    (void (*)(const ot_hash_class *const *, void *))&ot_##name##_out, \
+    (uint64_t (*)(const ot_hash_class *const *, void *))&st, \
+    (void (*)(const ot_hash_class **, const void *, uint64_t))&setst \
 };
 #define OT_DESC(id, out, st, lblen) \
-    (BR_HASHDESC_ID(id) | BR_HASHDESC_OUT(out) | BR_HASHDESC_STATE(st) \
-     | BR_HASHDESC_LBLEN(lblen) | BR_HASHDESC_MD_PADDING)
+    (OT_HASHDESC_ID(id) | OT_HASHDESC_OUT(out) | OT_HASHDESC_STATE(st) \
+     | OT_HASHDESC_LBLEN(lblen) | OT_HASHDESC_MD_PADDING)
 
-OT_HASH_CLASS(md5, br_md5_context, br_md5_update, br_md5_state, br_md5_set_state,
-              OT_DESC(br_md5_ID, 16, 16, 6))
-OT_HASH_CLASS(sha1, br_sha1_context, br_sha1_update, br_sha1_state, br_sha1_set_state,
-              OT_DESC(br_sha1_ID, 20, 20, 6) | BR_HASHDESC_MD_PADDING_BE)
-OT_HASH_CLASS(sha224, br_sha224_context, br_sha224_update, br_sha224_state, br_sha224_set_state,
-              OT_DESC(br_sha224_ID, 28, 32, 6) | BR_HASHDESC_MD_PADDING_BE)
-OT_HASH_CLASS(sha256, br_sha256_context, br_sha224_update, br_sha224_state, br_sha224_set_state,
-              OT_DESC(br_sha256_ID, 32, 32, 6) | BR_HASHDESC_MD_PADDING_BE)
-OT_HASH_CLASS(sha384, br_sha384_context, br_sha384_update, br_sha384_state, br_sha384_set_state,
-              OT_DESC(br_sha384_ID, 48, 64, 7) | BR_HASHDESC_MD_PADDING_BE | BR_HASHDESC_MD_PADDING_128)
-OT_HASH_CLASS(sha512, br_sha512_context, br_sha384_update, br_sha384_state, br_sha384_set_state,
-              OT_DESC(br_sha512_ID, 64, 64, 7) | BR_HASHDESC_MD_PADDING_BE | BR_HASHDESC_MD_PADDING_128)
+OT_HASH_CLASS(md5, ot_md5_context, ot_md5_update, ot_md5_state, ot_md5_set_state,
+              OT_DESC(ot_md5_ID, 16, 16, 6))
+OT_HASH_CLASS(sha1, ot_sha1_context, ot_sha1_update, ot_sha1_state, ot_sha1_set_state,
+              OT_DESC(ot_sha1_ID, 20, 20, 6) | OT_HASHDESC_MD_PADDING_BE)
+OT_HASH_CLASS(sha224, ot_sha224_context, ot_sha224_update, ot_sha224_state, ot_sha224_set_state,
+              OT_DESC(ot_sha224_ID, 28, 32, 6) | OT_HASHDESC_MD_PADDING_BE)
+OT_HASH_CLASS(sha256, ot_sha256_context, ot_sha224_update, ot_sha224_state, ot_sha224_set_state,
+              OT_DESC(ot_sha256_ID, 32, 32, 6) | OT_HASHDESC_MD_PADDING_BE)
+OT_HASH_CLASS(sha384, ot_sha384_context, ot_sha384_update, ot_sha384_state, ot_sha384_set_state,
+              OT_DESC(ot_sha384_ID, 48, 64, 7) | OT_HASHDESC_MD_PADDING_BE | OT_HASHDESC_MD_PADDING_128)
+OT_HASH_CLASS(sha512, ot_sha512_context, ot_sha384_update, ot_sha384_state, ot_sha384_set_state,
+              OT_DESC(ot_sha512_ID, 64, 64, 7) | OT_HASHDESC_MD_PADDING_BE | OT_HASHDESC_MD_PADDING_128)
 
 static void ot_enc32be(void *dst, uint32_t x)
 {
@@ -436,18 +436,18 @@ static void aes_set(void *ctx, const void *key, size_t len)
     c->key_len = len;
 }
 
-static const br_block_cbcenc_class ot_aes_cbcenc_vtable;
-static const br_block_cbcdec_class ot_aes_cbcdec_vtable;
-static const br_block_ctr_class ot_aes_ctr_vtable;
+static const ot_block_cbcenc_class ot_aes_cbcenc_vtable;
+static const ot_block_cbcdec_class ot_aes_cbcdec_vtable;
+static const ot_block_ctr_class ot_aes_ctr_vtable;
 
-static void aes_cbcenc_init(const br_block_cbcenc_class **ctx, const void *key, size_t len)
+static void aes_cbcenc_init(const ot_block_cbcenc_class **ctx, const void *key, size_t len)
 { *ctx = &ot_aes_cbcenc_vtable; aes_set(ctx, key, len); }
-static void aes_cbcdec_init(const br_block_cbcdec_class **ctx, const void *key, size_t len)
+static void aes_cbcdec_init(const ot_block_cbcdec_class **ctx, const void *key, size_t len)
 { *ctx = &ot_aes_cbcdec_vtable; aes_set(ctx, key, len); }
-static void aes_ctr_init(const br_block_ctr_class **ctx, const void *key, size_t len)
+static void aes_ctr_init(const ot_block_ctr_class **ctx, const void *key, size_t len)
 { *ctx = &ot_aes_ctr_vtable; aes_set(ctx, key, len); }
 
-static void aes_cbcenc_run(const br_block_cbcenc_class *const *ctx, void *iv, void *data, size_t len)
+static void aes_cbcenc_run(const ot_block_cbcenc_class *const *ctx, void *iv, void *data, size_t len)
 {
     const ot_aes_context *c = (const void *)ctx;
     if (!len) return;
@@ -456,7 +456,7 @@ static void aes_cbcenc_run(const br_block_cbcenc_class *const *ctx, void *iv, vo
     memcpy(iv, (unsigned char *)data + len - 16, 16);
 }
 
-static void aes_cbcdec_run(const br_block_cbcdec_class *const *ctx, void *iv, void *data, size_t len)
+static void aes_cbcdec_run(const ot_block_cbcdec_class *const *ctx, void *iv, void *data, size_t len)
 {
     const ot_aes_context *c = (const void *)ctx;
     unsigned char next[16];
@@ -466,7 +466,7 @@ static void aes_cbcdec_run(const br_block_cbcdec_class *const *ctx, void *iv, vo
     memcpy(iv, next, 16);
 }
 
-static uint32_t aes_ctr_run(const br_block_ctr_class *const *ctx, const void *iv, uint32_t cc,
+static uint32_t aes_ctr_run(const ot_block_ctr_class *const *ctx, const void *iv, uint32_t cc,
                             void *data, size_t len)
 {
     const ot_aes_context *c = (const void *)ctx;
@@ -478,13 +478,13 @@ static uint32_t aes_ctr_run(const br_block_ctr_class *const *ctx, const void *iv
     return cc + (uint32_t)((len + 15) >> 4);
 }
 
-static const br_block_cbcenc_class ot_aes_cbcenc_vtable = {
+static const ot_block_cbcenc_class ot_aes_cbcenc_vtable = {
     sizeof(ot_aes_context), 16, 4, aes_cbcenc_init, aes_cbcenc_run
 };
-static const br_block_cbcdec_class ot_aes_cbcdec_vtable = {
+static const ot_block_cbcdec_class ot_aes_cbcdec_vtable = {
     sizeof(ot_aes_context), 16, 4, aes_cbcdec_init, aes_cbcdec_run
 };
-static const br_block_ctr_class ot_aes_ctr_vtable = {
+static const ot_block_ctr_class ot_aes_ctr_vtable = {
     sizeof(ot_aes_context), 16, 4, aes_ctr_init, aes_ctr_run
 };
 
@@ -492,7 +492,7 @@ static const br_block_ctr_class ot_aes_ctr_vtable = {
 
 /* RFC 7539's 32-bit counter and 96-bit nonce are the original's 64-bit
  * counter (cc, then the nonce's first word) and 64-bit nonce (the rest). */
-static uint32_t ot_chacha20_run(const void *key, const void *iv, uint32_t cc, void *data, size_t len)
+static uint32_t ot_chacha20_op(const void *key, const void *iv, uint32_t cc, void *data, size_t len)
 {
     const unsigned char *v = iv;
     uint64_t counter = (uint64_t)cc | ((uint64_t)ot_dec32le(v) << 32);
@@ -500,9 +500,9 @@ static uint32_t ot_chacha20_run(const void *key, const void *iv, uint32_t cc, vo
     return cc + (uint32_t)((len + 63) >> 6);
 }
 
-static void ot_poly1305_run(const void *key, const void *iv, void *data, size_t len,
+static void ot_poly1305_op(const void *key, const void *iv, void *data, size_t len,
                             const void *aad, size_t aad_len, void *tag,
-                            br_chacha20_run ichacha, int encrypt)
+                            ot_chacha20_run ichacha, int encrypt)
 {
     unsigned char pkey[32], small[512], *mac;
     size_t apad = (aad_len + 15) & ~(size_t)15, dpad = (len + 15) & ~(size_t)15;
@@ -532,7 +532,7 @@ static void ot_poly1305_run(const void *key, const void *iv, void *data, size_t 
 
 /* ---- RSA ---- */
 
-static int rsa_trim(const br_rsa_public_key *pk, const unsigned char **n, size_t *nlen)
+static int rsa_trim(const ot_rsa_public_key *pk, const unsigned char **n, size_t *nlen)
 {
     *n = pk->n;
     *nlen = pk->nlen;
@@ -540,7 +540,7 @@ static int rsa_trim(const br_rsa_public_key *pk, const unsigned char **n, size_t
     return *nlen > 0 && *nlen <= 1024;
 }
 
-static uint32_t ot_rsa_public(unsigned char *x, size_t xlen, const br_rsa_public_key *pk)
+static uint32_t ot_rsa_public_op(unsigned char *x, size_t xlen, const ot_rsa_public_key *pk)
 {
     const unsigned char *n;
     size_t nlen;
@@ -590,9 +590,9 @@ static uint32_t pkcs1_sig_unpad(const unsigned char *em, size_t len, const unsig
     return 1;
 }
 
-static uint32_t ot_rsa_pkcs1_vrfy(const unsigned char *x, size_t xlen,
+static uint32_t ot_rsa_pkcs1_vrfy_op(const unsigned char *x, size_t xlen,
                                   const unsigned char *hash_oid, size_t hash_len,
-                                  const br_rsa_public_key *pk, unsigned char *hash_out)
+                                  const ot_rsa_public_key *pk, unsigned char *hash_out)
 {
     const unsigned char *n;
     size_t nlen;
@@ -639,17 +639,17 @@ static int ecdsa_der(const unsigned char *sig, size_t len, size_t flen, unsigned
     return pos == len;
 }
 
-static uint32_t ot_ecdsa_vrfy_asn1(const br_ec_impl *impl, const void *hash, size_t hash_len,
-                                   const br_ec_public_key *pk, const void *sig, size_t sig_len)
+static uint32_t ot_ecdsa_vrfy_asn1(const ot_ec_impl *impl, const void *hash, size_t hash_len,
+                                   const ot_ec_public_key *pk, const void *sig, size_t sig_len)
 {
     unsigned char r[66], s[66];
     size_t flen;
     int bits;
     (void)impl;
     switch (pk->curve) {
-    case BR_EC_secp256r1: bits = 256; flen = 32; break;
-    case BR_EC_secp384r1: bits = 384; flen = 48; break;
-    case BR_EC_secp521r1: bits = 521; flen = 66; break;
+    case OT_EC_secp256r1: bits = 256; flen = 32; break;
+    case OT_EC_secp384r1: bits = 384; flen = 48; break;
+    case OT_EC_secp521r1: bits = 521; flen = 66; break;
     default: return 0;
     }
     if (pk->qlen != 1 + 2 * flen || pk->q[0] != 0x04 || !ecdsa_der(sig, sig_len, flen, r, s)) return 0;
@@ -727,10 +727,10 @@ static const unsigned char c25519_n[32] = {
 static const unsigned char *ot_ec_generator(int curve, size_t *len)
 {
     switch (curve) {
-    case BR_EC_secp256r1: *len = sizeof p256_g; return p256_g;
-    case BR_EC_secp384r1: *len = sizeof p384_g; return p384_g;
-    case BR_EC_secp521r1: *len = sizeof p521_g; return p521_g;
-    case BR_EC_curve25519: *len = sizeof c25519_g; return c25519_g;
+    case OT_EC_secp256r1: *len = sizeof p256_g; return p256_g;
+    case OT_EC_secp384r1: *len = sizeof p384_g; return p384_g;
+    case OT_EC_secp521r1: *len = sizeof p521_g; return p521_g;
+    case OT_EC_curve25519: *len = sizeof c25519_g; return c25519_g;
     }
     *len = 0;
     return NULL;
@@ -739,10 +739,10 @@ static const unsigned char *ot_ec_generator(int curve, size_t *len)
 static const unsigned char *ot_ec_order(int curve, size_t *len)
 {
     switch (curve) {
-    case BR_EC_secp256r1: *len = sizeof p256_n; return p256_n;
-    case BR_EC_secp384r1: *len = sizeof p384_n; return p384_n;
-    case BR_EC_secp521r1: *len = sizeof p521_n; return p521_n;
-    case BR_EC_curve25519: *len = sizeof c25519_n; return c25519_n;
+    case OT_EC_secp256r1: *len = sizeof p256_n; return p256_n;
+    case OT_EC_secp384r1: *len = sizeof p384_n; return p384_n;
+    case OT_EC_secp521r1: *len = sizeof p521_n; return p521_n;
+    case OT_EC_curve25519: *len = sizeof c25519_n; return c25519_n;
     }
     *len = 0;
     return NULL;
@@ -751,10 +751,10 @@ static const unsigned char *ot_ec_order(int curve, size_t *len)
 static size_t ot_ec_xoff(int curve, size_t *len)
 {
     switch (curve) {
-    case BR_EC_secp256r1: *len = 32; return 1;
-    case BR_EC_secp384r1: *len = 48; return 1;
-    case BR_EC_secp521r1: *len = 66; return 1;
-    case BR_EC_curve25519: *len = 32; return 0;
+    case OT_EC_secp256r1: *len = 32; return 1;
+    case OT_EC_secp384r1: *len = 48; return 1;
+    case OT_EC_secp521r1: *len = 66; return 1;
+    case OT_EC_curve25519: *len = 32; return 0;
     }
     *len = 0;
     return 0;
@@ -762,15 +762,15 @@ static size_t ot_ec_xoff(int curve, size_t *len)
 
 static int nist_bits(int curve)
 {
-    return curve == BR_EC_secp256r1 ? 256 : curve == BR_EC_secp384r1 ? 384
-         : curve == BR_EC_secp521r1 ? 521 : 0;
+    return curve == OT_EC_secp256r1 ? 256 : curve == OT_EC_secp384r1 ? 384
+         : curve == OT_EC_secp521r1 ? 521 : 0;
 }
 
 static uint32_t ot_ec_mul(unsigned char *G, size_t Glen, const unsigned char *x, size_t xlen, int curve)
 {
     unsigned char k[32], out[32];
     int rc;
-    if (curve != BR_EC_curve25519) {
+    if (curve != OT_EC_curve25519) {
         int bits = nist_bits(curve);
         return bits && g_ecmul(bits, G, Glen, x, xlen);
     }
@@ -787,7 +787,7 @@ static uint32_t ot_ec_mul(unsigned char *G, size_t Glen, const unsigned char *x,
 static size_t ot_ec_mulgen(unsigned char *R, const unsigned char *x, size_t xlen, int curve)
 {
     unsigned char k[32];
-    if (curve != BR_EC_curve25519) {
+    if (curve != OT_EC_curve25519) {
         int bits = nist_bits(curve);
         return bits ? g_ecmulgen(bits, R, x, xlen) : 0;
     }
@@ -809,7 +809,7 @@ static uint32_t ot_ec_muladd(unsigned char *A, const unsigned char *B, size_t le
     return 0;
 }
 
-static const br_ec_impl ot_ec_impl = {
+static const ot_ec_impl ot_ec_glue = {
     (uint32_t)0x23800000,     /* P-256, P-384, P-521 and Curve25519 */
     ot_ec_generator, ot_ec_order, ot_ec_xoff, ot_ec_mul, ot_ec_mulgen, ot_ec_muladd
 };
@@ -822,17 +822,17 @@ static const br_ec_impl ot_ec_impl = {
 void ot_glue_select(struct ot_impls *m, int offload)
 {
     (void)offload;
-    m->sha256 = &br_sha256_vtable;
-    m->sha384 = &br_sha384_vtable;
-    m->sha512 = &br_sha512_vtable;
-    m->rsa_vrfy = ot_rsa_pkcs1_vrfy;
-    m->rsa_pub = ot_rsa_public;
+    m->sha256 = &ot_sha256_vtable;
+    m->sha384 = &ot_sha384_vtable;
+    m->sha512 = &ot_sha512_vtable;
+    m->rsa_vrfy = ot_rsa_pkcs1_vrfy_op;
+    m->rsa_pub = ot_rsa_public_op;
     m->ecdsa_vrfy = ot_ecdsa_vrfy_asn1;
-    m->ec = &ot_ec_impl;
+    m->ec = &ot_ec_glue;
     m->ghash = g_ghash;
     m->aes_cbcenc = &ot_aes_cbcenc_vtable;
     m->aes_cbcdec = &ot_aes_cbcdec_vtable;
     m->aes_ctr = &ot_aes_ctr_vtable;
-    m->chacha20 = ot_chacha20_run;
-    m->poly1305 = ot_poly1305_run;
+    m->chacha20 = ot_chacha20_op;
+    m->poly1305 = ot_poly1305_op;
 }

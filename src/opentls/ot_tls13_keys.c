@@ -9,9 +9,9 @@
 #include "ot_tls13.h"
 
 static const struct ot13_suite suites[] = {
-    { OT13_AES_128_GCM_SHA256, "TLS_AES_128_GCM_SHA256", 0, 16, &br_sha256_vtable, 32, NULL, 0, 0, 0 },
-    { OT13_AES_256_GCM_SHA384, "TLS_AES_256_GCM_SHA384", 0, 32, &br_sha384_vtable, 48, NULL, 0, 0, 0 },
-    { OT13_CHACHA20_POLY1305_SHA256, "TLS_CHACHA20_POLY1305_SHA256", 1, 32, &br_sha256_vtable, 32, NULL, 0, 0, 0 },
+    { OT13_AES_128_GCM_SHA256, "TLS_AES_128_GCM_SHA256", 0, 16, &ot_sha256_vtable, 32, NULL, 0, 0, 0 },
+    { OT13_AES_256_GCM_SHA384, "TLS_AES_256_GCM_SHA384", 0, 32, &ot_sha384_vtable, 48, NULL, 0, 0, 0 },
+    { OT13_CHACHA20_POLY1305_SHA256, "TLS_CHACHA20_POLY1305_SHA256", 1, 32, &ot_sha256_vtable, 32, NULL, 0, 0, 0 },
 };
 
 const struct ot13_suite *ot13_suite(unsigned id)
@@ -22,14 +22,14 @@ const struct ot13_suite *ot13_suite(unsigned id)
     return NULL;
 }
 
-static size_t hash_len(const br_hash_class *h)
+static size_t hash_len(const ot_hash_class *h)
 {
-    return (h->desc >> BR_HASHDESC_OUT_OFF) & BR_HASHDESC_OUT_MASK;
+    return (h->desc >> OT_HASHDESC_OUT_OFF) & OT_HASHDESC_OUT_MASK;
 }
 
 /* ---- HKDF (RFC 5869) and the TLS 1.3 labels ---- */
 
-void ot13_extract(const br_hash_class *h, const unsigned char *salt,
+void ot13_extract(const ot_hash_class *h, const unsigned char *salt,
                   const unsigned char *ikm, size_t ikm_len, unsigned char *prk)
 {
     static const unsigned char zeros[OT13_HASH_MAX];
@@ -44,7 +44,7 @@ void ot13_extract(const br_hash_class *h, const unsigned char *salt,
     memset(&hc, 0, sizeof hc);
 }
 
-void ot13_expand_label(const br_hash_class *h, const unsigned char *secret, const char *label,
+void ot13_expand_label(const ot_hash_class *h, const unsigned char *secret, const char *label,
                        const unsigned char *context, size_t context_len,
                        unsigned char *out, size_t out_len)
 {
@@ -80,13 +80,13 @@ void ot13_expand_label(const br_hash_class *h, const unsigned char *secret, cons
     memset(&hc, 0, sizeof hc);
 }
 
-void ot13_derive(const br_hash_class *h, const unsigned char *secret, const char *label,
+void ot13_derive(const ot_hash_class *h, const unsigned char *secret, const char *label,
                  const unsigned char *thash, unsigned char *out)
 {
     unsigned char empty[OT13_HASH_MAX];
     size_t hl = hash_len(h);
     if (!thash) {
-        br_hash_compat_context hc;
+        ot_hash_compat_context hc;
         h->init(&hc.vtable);
         h->out(&hc.vtable, empty);
         thash = empty;
@@ -94,7 +94,7 @@ void ot13_derive(const br_hash_class *h, const unsigned char *secret, const char
     ot13_expand_label(h, secret, label, thash, hl, out, hl);
 }
 
-void ot13_finished(const br_hash_class *h, const unsigned char *base,
+void ot13_finished(const ot_hash_class *h, const unsigned char *base,
                    const unsigned char *thash, unsigned char *out)
 {
     unsigned char fk[OT13_HASH_MAX];
@@ -119,7 +119,7 @@ static int keys_from_secret(struct ot13_keys *k)
     ot13_expand_label(s->hash, k->secret, "iv", NULL, 0, k->iv, 12);
     k->seq = 0;
     if (!s->chacha) {
-        const br_block_ctr_class *ctr = k->impls->aes_ctr;
+        const ot_block_ctr_class *ctr = k->impls->aes_ctr;
         if (ctr->context_size > sizeof k->ctr) return -1;
         ctr->init(&k->ctr.vtable, k->key, s->key_len);
         memset(k->h, 0, 16);
@@ -167,7 +167,7 @@ static void nonce(const struct ot13_keys *k, unsigned char *n)
 static void gcm(struct ot13_keys *k, int encrypt, const unsigned char *n, const unsigned char *aad,
                 size_t alen, unsigned char *data, size_t len, unsigned char *tag)
 {
-    const br_block_ctr_class *ctr = k->ctr.vtable;
+    const ot_block_ctr_class *ctr = k->ctr.vtable;
     unsigned char y[16], lens[16], mask[16];
     int i;
     memset(y, 0, 16);
@@ -191,7 +191,7 @@ size_t ot13_seal(struct ot13_keys *k, unsigned char *rec, int type, size_t len)
     unsigned char n[12], *data = rec + 5;
     size_t clen = len + 1 + 16;
     data[len++] = (unsigned char)type;
-    rec[0] = BR_SSL_APPLICATION_DATA;
+    rec[0] = OT_SSL_APPLICATION_DATA;
     rec[1] = 3;
     rec[2] = 3;
     rec[3] = (unsigned char)(clen >> 8);
@@ -210,7 +210,7 @@ int ot13_open(struct ot13_keys *k, unsigned char *rec, size_t reclen, int *type,
 {
     unsigned char n[12], tag[16], *data = rec + 5, diff = 0;
     size_t clen, i;
-    if (reclen < 5 + 17 || reclen > OT13_RX_MAX) return BR_ERR_BAD_PARAM;
+    if (reclen < 5 + 17 || reclen > OT13_RX_MAX) return OT_ERR_BAD_PARAM;
     clen = reclen - 5 - 16;
     nonce(k, n);
     if (k->suite->chacha) {
@@ -219,20 +219,20 @@ int ot13_open(struct ot13_keys *k, unsigned char *rec, size_t reclen, int *type,
         gcm(k, 0, n, rec, 5, data, clen, tag);
     }
     for (i = 0; i < 16; ++i) diff |= (unsigned char)(tag[i] ^ data[clen + i]);
-    if (diff) return BR_ERR_BAD_MAC;
+    if (diff) return OT_ERR_BAD_MAC;
     ++k->seq;
     /* TLSInnerPlaintext: content, the type, zeros */
     while (clen && data[clen - 1] == 0) --clen;
-    if (!clen) return BR_ERR_BAD_PARAM;
+    if (!clen) return OT_ERR_BAD_PARAM;
     *type = data[--clen];
-    if (clen > OT13_RECORD_MAX) return BR_ERR_TOO_LARGE;
+    if (clen > OT13_RECORD_MAX) return OT_ERR_TOO_LARGE;
     *len = clen;
     return 0;
 }
 
 /* ---- TLS 1.2 ---- */
 
-void ot12_prf(const br_hash_class *h, const unsigned char *secret, size_t slen, const char *label,
+void ot12_prf(const ot_hash_class *h, const unsigned char *secret, size_t slen, const char *label,
               const unsigned char *seed, size_t seed_len, unsigned char *out, size_t out_len)
 {
     struct ot_hmac_key kc;
@@ -285,7 +285,7 @@ int ot12_keys_set(struct ot13_keys *k, const struct ot13_suite *s, const struct 
     }
     memcpy(k->iv, iv, s->chacha ? 12 : 4);
     if (!s->chacha) {
-        const br_block_ctr_class *ctr = impls->aes_ctr;
+        const ot_block_ctr_class *ctr = impls->aes_ctr;
         if (ctr->context_size > sizeof k->ctr) return -1;
         ctr->init(&k->ctr.vtable, k->key, s->key_len);
         ctr->run(&k->ctr.vtable, k->h, 0, k->h, 16);     /* H: AES of the zero block */
@@ -345,8 +345,8 @@ static int cbc_open(struct ot13_keys *k, unsigned char *rec, size_t reclen, size
     unsigned char aad[13], iv[16], mac[48], diff, good;
     unsigned char *data = rec + 5 + 16;
     size_t ml = k->suite->mac_len, dlen, pad, plen, i, scan;
-    if (reclen < 5 + 16 + 16 || (reclen - 5 - 16) % 16 || reclen - 5 - 16 < ml + 1) return BR_ERR_BAD_PARAM;
-    if (reclen > OT13_RX_MAX) return BR_ERR_BAD_PARAM;
+    if (reclen < 5 + 16 + 16 || (reclen - 5 - 16) % 16 || reclen - 5 - 16 < ml + 1) return OT_ERR_BAD_PARAM;
+    if (reclen > OT13_RX_MAX) return OT_ERR_BAD_PARAM;
     dlen = reclen - 5 - 16;
     memcpy(iv, rec + 5, 16);
     k->ctr.cbcdec->run(&k->ctr.cbcdec, iv, data, dlen);
@@ -371,9 +371,9 @@ static int cbc_open(struct ot13_keys *k, unsigned char *rec, size_t reclen, size
     }
     diff = (unsigned char)!good;
     for (i = 0; i < ml; ++i) diff |= (unsigned char)(mac[i] ^ data[plen + i]);
-    if (diff) return BR_ERR_BAD_MAC;
+    if (diff) return OT_ERR_BAD_MAC;
     ++k->seq;
-    if (plen > OT13_RECORD_MAX) return BR_ERR_TOO_LARGE;
+    if (plen > OT13_RECORD_MAX) return OT_ERR_TOO_LARGE;
     memmove(rec + 5, data, plen);
     *len = plen;
     return 0;
@@ -413,7 +413,7 @@ int ot12_open(struct ot13_keys *k, unsigned char *rec, size_t reclen, size_t *le
     unsigned char n[12], aad[13], tag[16], diff = 0, *data;
     size_t clen, i, over = k->suite->chacha ? 16 : 8 + 16;
     if (k->suite->mac) return cbc_open(k, rec, reclen, len);
-    if (reclen < 5 + over || reclen > OT13_RX_MAX) return BR_ERR_BAD_PARAM;
+    if (reclen < 5 + over || reclen > OT13_RX_MAX) return OT_ERR_BAD_PARAM;
     clen = reclen - 5 - over;
     aad12(k, rec[0], clen, aad);
     if (k->suite->chacha) {
@@ -427,9 +427,9 @@ int ot12_open(struct ot13_keys *k, unsigned char *rec, size_t reclen, size_t *le
         gcm(k, 0, n, aad, 13, data, clen, tag);
     }
     for (i = 0; i < 16; ++i) diff |= (unsigned char)(tag[i] ^ data[clen + i]);
-    if (diff) return BR_ERR_BAD_MAC;
+    if (diff) return OT_ERR_BAD_MAC;
     ++k->seq;
-    if (clen > OT13_RECORD_MAX) return BR_ERR_TOO_LARGE;
+    if (clen > OT13_RECORD_MAX) return OT_ERR_TOO_LARGE;
     if (data != rec + 5) memmove(rec + 5, data, clen);
     *len = clen;
     return 0;

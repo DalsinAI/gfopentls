@@ -4,7 +4,6 @@
  * MIT licensed and free. Copyright (c) 2026 AmiCradle Team. */
 #include "ot_internal.h"
 #include "ot_tls13.h"
-#include "inner.h"      /* BearSSL's br_ssl_engine_fail() */
 #include <clib/gfopentls_protos.h>
 
 /* ---- small helpers (no stdio in the library) ---- */
@@ -194,7 +193,7 @@ static void cert_error(struct OTConnection *c, LONG code, int err)
         }
         break;
     case OTERR_EXPIRED:
-        ot_set_error(c, code, err, err == BR_ERR_X509_TIME_UNKNOWN
+        ot_set_error(c, code, err, err == OT_ERR_X509_TIME_UNKNOWN
             ? "The Amiga's clock is not set, so certificate dates cannot be checked."
             : "A certificate in the server's chain is expired or not yet valid (check the Amiga's clock).",
             NULL, NULL);
@@ -217,11 +216,11 @@ LONG ot_engine_error(struct OTConnection *c, int err)
 {
     char num[12];
     c->state = OTS_FAILED;
-    if (err >= BR_ERR_SEND_FATAL_ALERT) {
-        fmt_long(num, err - BR_ERR_SEND_FATAL_ALERT);
+    if (err >= OT_ERR_SEND_FATAL_ALERT) {
+        fmt_long(num, err - OT_ERR_SEND_FATAL_ALERT);
         ot_set_error(c, OTERR_PROTOCOL, err, "GFOpenTLS ended the connection (alert ", num, ").");
-    } else if (err >= BR_ERR_RECV_FATAL_ALERT) {
-        int alert = err - BR_ERR_RECV_FATAL_ALERT;
+    } else if (err >= OT_ERR_RECV_FATAL_ALERT) {
+        int alert = err - OT_ERR_RECV_FATAL_ALERT;
         fmt_long(num, alert);
         if (alert == 70) {
             ot_set_error(c, OTERR_VERSION, alert, c->max_version < OT_TLS13
@@ -232,11 +231,11 @@ LONG ot_engine_error(struct OTConnection *c, int err)
             cat(c->text, sizeof c->text, num);
             cat(c->text, sizeof c->text, ").");
         }
-    } else if (err == BR_ERR_X509_BAD_SERVER_NAME || err == OT_X509_IP) {
+    } else if (err == OT_ERR_X509_BAD_SERVER_NAME || err == OT_X509_IP) {
         cert_error(c, OTERR_HOSTNAME, err);
-    } else if (err == BR_ERR_X509_EXPIRED || err == BR_ERR_X509_TIME_UNKNOWN) {
+    } else if (err == OT_ERR_X509_EXPIRED || err == OT_ERR_X509_TIME_UNKNOWN) {
         cert_error(c, OTERR_EXPIRED, err);
-    } else if (err == BR_ERR_X509_NOT_TRUSTED) {
+    } else if (err == OT_ERR_X509_NOT_TRUSTED) {
         if (!c->ctx->merged_count)
             ot_set_error(c, OTERR_TRUSTSTORE, err,
                 "No trusted certificates: install the CA bundle as S:GFOpenTLS/ca-bundle.pem.", NULL, NULL);
@@ -244,17 +243,17 @@ LONG ot_engine_error(struct OTConnection *c, int err)
             cert_error(c, OTERR_UNTRUSTED, err);
     } else if (err == OT_X509_PINNED) {
         cert_error(c, OTERR_PINNED, err);
-    } else if (err >= BR_ERR_X509_OK && err < 64) {
+    } else if (err >= OT_ERR_X509_OK && err < 64) {
         cert_error(c, OTERR_BADCERT, err);
-    } else if (err == BR_ERR_UNSUPPORTED_VERSION || err == BR_ERR_BAD_VERSION) {
+    } else if (err == OT_ERR_UNSUPPORTED_VERSION || err == OT_ERR_BAD_VERSION) {
         ot_set_error(c, OTERR_VERSION, err, "The server and GFOpenTLS have no protocol version in common.", NULL, NULL);
-    } else if (err == BR_ERR_BAD_CIPHER_SUITE || err == BR_ERR_INVALID_ALGORITHM) {
+    } else if (err == OT_ERR_BAD_CIPHER_SUITE || err == OT_ERR_INVALID_ALGORITHM) {
         ot_set_error(c, OTERR_CIPHER, err, "The server chose a cipher suite, curve or signature GFOpenTLS does not offer.", NULL, NULL);
-    } else if (err == BR_ERR_NO_RANDOM) {
+    } else if (err == OT_ERR_NO_RANDOM) {
         ot_set_error(c, OTERR_RANDOM, err, "No random numbers for the handshake.", NULL, NULL);
-    } else if (err == BR_ERR_BAD_SIGNATURE) {
+    } else if (err == OT_ERR_BAD_SIGNATURE) {
         ot_set_error(c, OTERR_PROTOCOL, err, "The server's handshake signature does not verify.", NULL, NULL);
-    } else if (err == BR_ERR_IO) {
+    } else if (err == OT_ERR_IO) {
         ot_set_error(c, OTERR_IO, err, "The connection failed.", NULL, NULL);
     } else {
         fmt_long(num, err);
@@ -356,16 +355,16 @@ VOID OT_FreeContext(struct OTContext *x)
 }
 
 /* the trust anchors for a handshake: the system's and the context's own */
-static void merged_anchors(struct OTContext *x, const br_x509_trust_anchor **ta, size_t *n)
+static void merged_anchors(struct OTContext *x, const ot_x509_trust_anchor **ta, size_t *n)
 {
     ot_lock(x->lock);
     if (!x->merged_ok) {
         const struct ot_anchors *sys = (x->flags & OTCF_NO_SYSTEM_TRUST) ? NULL : ot_system_anchors();
         size_t count = (sys ? sys->count : 0) + x->extra.count;
-        struct merged_block *b = ot_alloc(sizeof(br_x509_trust_anchor) * (count ? count : 1)
-                                          + sizeof(br_x509_trust_anchor));
+        struct merged_block *b = ot_alloc(sizeof(ot_x509_trust_anchor) * (count ? count : 1)
+                                          + sizeof(ot_x509_trust_anchor));
         if (b) {
-            br_x509_trust_anchor *arr = (br_x509_trust_anchor *)(void *)(b + 1);
+            ot_x509_trust_anchor *arr = (ot_x509_trust_anchor *)(void *)(b + 1);
             /* the block header sits just before the array; keep the old ones */
             b->next = x->merged ? ((struct merged_block *)(void *)x->merged) - 1 : NULL;
             if (sys && sys->count) memcpy(arr, sys->ta, sys->count * sizeof *arr);
@@ -552,7 +551,7 @@ LONG OT_SetVersion(struct OTConnection *c, LONG minVersion, LONG maxVersion)
 static LONG start_handshake(struct OTConnection *c)
 {
     struct OTContext *x = c->ctx;
-    const br_x509_trust_anchor *ta = NULL;
+    const ot_x509_trust_anchor *ta = NULL;
     size_t ta_count = 0;
     int need_trust = c->verify == OTV_FULL || c->verify == OTV_NO_HOSTNAME || c->verify == OTV_REPORT;
 
@@ -815,9 +814,9 @@ LONG OT_GetVerifyResult(struct OTConnection *c)
     err = c->x509.verdict;
     if (!c->x509.have_fingerprint || err < 0) return OTERR_STATE;
     if (!err) return OTERR_OK;
-    if (err == BR_ERR_X509_BAD_SERVER_NAME || err == OT_X509_IP) return OTERR_HOSTNAME;
-    if (err == BR_ERR_X509_EXPIRED || err == BR_ERR_X509_TIME_UNKNOWN) return OTERR_EXPIRED;
-    if (err == BR_ERR_X509_NOT_TRUSTED) return c->ctx->merged_count ? OTERR_UNTRUSTED : OTERR_TRUSTSTORE;
+    if (err == OT_ERR_X509_BAD_SERVER_NAME || err == OT_X509_IP) return OTERR_HOSTNAME;
+    if (err == OT_ERR_X509_EXPIRED || err == OT_ERR_X509_TIME_UNKNOWN) return OTERR_EXPIRED;
+    if (err == OT_ERR_X509_NOT_TRUSTED) return c->ctx->merged_count ? OTERR_UNTRUSTED : OTERR_TRUSTSTORE;
     if (err == OT_X509_PINNED) return OTERR_PINNED;
     return OTERR_BADCERT;
 }
@@ -855,13 +854,13 @@ CONST_STRPTR OT_GetKeyExchange(struct OTConnection *c)
     if (!c || (c->state != OTS_OPEN && c->state != OTS_CLOSED)) return (CONST_STRPTR)"";
     if (c->t13->suite->rsa_kx) return (CONST_STRPTR)"RSA";
     if (c->t13->resumed12) return (CONST_STRPTR)"";
-    curve = c->t13->group == 29 ? BR_EC_curve25519 : c->t13->group == 23 ? BR_EC_secp256r1
-          : c->t13->group == 24 ? BR_EC_secp384r1 : c->t13->group == 25 ? BR_EC_secp521r1 : 0;
+    curve = c->t13->group == 29 ? OT_EC_curve25519 : c->t13->group == 23 ? OT_EC_secp256r1
+          : c->t13->group == 24 ? OT_EC_secp384r1 : c->t13->group == 25 ? OT_EC_secp521r1 : 0;
     switch (curve) {
-    case BR_EC_curve25519: return (CONST_STRPTR)"x25519";
-    case BR_EC_secp256r1: return (CONST_STRPTR)"secp256r1";
-    case BR_EC_secp384r1: return (CONST_STRPTR)"secp384r1";
-    case BR_EC_secp521r1: return (CONST_STRPTR)"secp521r1";
+    case OT_EC_curve25519: return (CONST_STRPTR)"x25519";
+    case OT_EC_secp256r1: return (CONST_STRPTR)"secp256r1";
+    case OT_EC_secp384r1: return (CONST_STRPTR)"secp384r1";
+    case OT_EC_secp521r1: return (CONST_STRPTR)"secp521r1";
     }
     return (CONST_STRPTR)"";
 }
