@@ -33,13 +33,13 @@ void ot13_extract(const br_hash_class *h, const unsigned char *salt,
                   const unsigned char *ikm, size_t ikm_len, unsigned char *prk)
 {
     static const unsigned char zeros[OT13_HASH_MAX];
-    br_hmac_key_context kc;
-    br_hmac_context hc;
+    struct ot_hmac_key kc;
+    struct ot_hmac hc;
     size_t hl = hash_len(h);
-    br_hmac_key_init(&kc, h, salt ? salt : zeros, hl);
-    br_hmac_init(&hc, &kc, 0);
-    br_hmac_update(&hc, ikm ? ikm : zeros, ikm ? ikm_len : hl);
-    br_hmac_out(&hc, prk);
+    ot_hmac_key_init(&kc, h, salt ? salt : zeros, hl);
+    ot_hmac_init(&hc, &kc);
+    ot_hmac_update(&hc, ikm ? ikm : zeros, ikm ? ikm_len : hl);
+    ot_hmac_out(&hc, prk);
     memset(&kc, 0, sizeof kc);
     memset(&hc, 0, sizeof hc);
 }
@@ -51,8 +51,8 @@ void ot13_expand_label(const br_hash_class *h, const unsigned char *secret, cons
     /* HkdfLabel: length (2), "tls13 " + label (1 + n), context (1 + n) */
     unsigned char info[2 + 1 + 6 + 32 + 1 + OT13_HASH_MAX], t[OT13_HASH_MAX], ctr = 1;
     size_t ll = strlen(label), il = 0, hl = hash_len(h), done = 0, n;
-    br_hmac_key_context kc;
-    br_hmac_context hc;
+    struct ot_hmac_key kc;
+    struct ot_hmac hc;
     if (ll > 32 || context_len > OT13_HASH_MAX) return;     /* never with ours */
     info[il++] = (unsigned char)(out_len >> 8);
     info[il++] = (unsigned char)out_len;
@@ -63,13 +63,13 @@ void ot13_expand_label(const br_hash_class *h, const unsigned char *secret, cons
     info[il++] = (unsigned char)context_len;
     if (context_len) memcpy(info + il, context, context_len);
     il += context_len;
-    br_hmac_key_init(&kc, h, secret, hl);
+    ot_hmac_key_init(&kc, h, secret, hl);
     while (done < out_len) {
-        br_hmac_init(&hc, &kc, 0);
-        if (done) br_hmac_update(&hc, t, hl);
-        br_hmac_update(&hc, info, il);
-        br_hmac_update(&hc, &ctr, 1);
-        br_hmac_out(&hc, t);
+        ot_hmac_init(&hc, &kc);
+        if (done) ot_hmac_update(&hc, t, hl);
+        ot_hmac_update(&hc, info, il);
+        ot_hmac_update(&hc, &ctr, 1);
+        ot_hmac_out(&hc, t);
         n = out_len - done < hl ? out_len - done : hl;
         memcpy(out + done, t, n);
         done += n;
@@ -98,14 +98,14 @@ void ot13_finished(const br_hash_class *h, const unsigned char *base,
                    const unsigned char *thash, unsigned char *out)
 {
     unsigned char fk[OT13_HASH_MAX];
-    br_hmac_key_context kc;
-    br_hmac_context hc;
+    struct ot_hmac_key kc;
+    struct ot_hmac hc;
     size_t hl = hash_len(h);
     ot13_expand_label(h, base, "finished", NULL, 0, fk, hl);
-    br_hmac_key_init(&kc, h, fk, hl);
-    br_hmac_init(&hc, &kc, 0);
-    br_hmac_update(&hc, thash, hl);
-    br_hmac_out(&hc, out);
+    ot_hmac_key_init(&kc, h, fk, hl);
+    ot_hmac_init(&hc, &kc);
+    ot_hmac_update(&hc, thash, hl);
+    ot_hmac_out(&hc, out);
     memset(fk, 0, sizeof fk);
     memset(&kc, 0, sizeof kc);
 }
@@ -235,29 +235,29 @@ int ot13_open(struct ot13_keys *k, unsigned char *rec, size_t reclen, int *type,
 void ot12_prf(const br_hash_class *h, const unsigned char *secret, size_t slen, const char *label,
               const unsigned char *seed, size_t seed_len, unsigned char *out, size_t out_len)
 {
-    br_hmac_key_context kc;
-    br_hmac_context hc;
+    struct ot_hmac_key kc;
+    struct ot_hmac hc;
     unsigned char a[OT13_HASH_MAX], block[OT13_HASH_MAX];
     size_t hl = hash_len(h), llen = strlen(label), take;
-    br_hmac_key_init(&kc, h, secret, slen);
+    ot_hmac_key_init(&kc, h, secret, slen);
     /* A(1) = HMAC(secret, label + seed) */
-    br_hmac_init(&hc, &kc, 0);
-    br_hmac_update(&hc, label, llen);
-    br_hmac_update(&hc, seed, seed_len);
-    br_hmac_out(&hc, a);
+    ot_hmac_init(&hc, &kc);
+    ot_hmac_update(&hc, label, llen);
+    ot_hmac_update(&hc, seed, seed_len);
+    ot_hmac_out(&hc, a);
     while (out_len) {
-        br_hmac_init(&hc, &kc, 0);
-        br_hmac_update(&hc, a, hl);
-        br_hmac_update(&hc, label, llen);
-        br_hmac_update(&hc, seed, seed_len);
-        br_hmac_out(&hc, block);
+        ot_hmac_init(&hc, &kc);
+        ot_hmac_update(&hc, a, hl);
+        ot_hmac_update(&hc, label, llen);
+        ot_hmac_update(&hc, seed, seed_len);
+        ot_hmac_out(&hc, block);
         take = out_len < hl ? out_len : hl;
         memcpy(out, block, take);
         out += take;
         out_len -= take;
-        br_hmac_init(&hc, &kc, 0);           /* A(i+1) = HMAC(secret, A(i)) */
-        br_hmac_update(&hc, a, hl);
-        br_hmac_out(&hc, a);
+        ot_hmac_init(&hc, &kc);           /* A(i+1) = HMAC(secret, A(i)) */
+        ot_hmac_update(&hc, a, hl);
+        ot_hmac_out(&hc, a);
     }
     memset(a, 0, sizeof a);
     memset(block, 0, sizeof block);
@@ -309,13 +309,13 @@ static void aad12(const struct ot13_keys *k, int type, size_t len, unsigned char
 static void cbc_mac(const struct ot13_keys *k, const unsigned char *aad, const unsigned char *data, size_t len,
                     unsigned char *out)
 {
-    br_hmac_key_context kc;
-    br_hmac_context hc;
-    br_hmac_key_init(&kc, k->suite->mac, k->mac_key, k->suite->mac_len);
-    br_hmac_init(&hc, &kc, 0);
-    br_hmac_update(&hc, aad, 13);
-    br_hmac_update(&hc, data, len);
-    br_hmac_out(&hc, out);
+    struct ot_hmac_key kc;
+    struct ot_hmac hc;
+    ot_hmac_key_init(&kc, k->suite->mac, k->mac_key, k->suite->mac_len);
+    ot_hmac_init(&hc, &kc);
+    ot_hmac_update(&hc, aad, 13);
+    ot_hmac_update(&hc, data, len);
+    ot_hmac_out(&hc, out);
 }
 
 /* AES-CBC with HMAC (RFC 5246 section 6.2.3.2): a fresh IV, then the
@@ -361,13 +361,13 @@ static int cbc_open(struct ot13_keys *k, unsigned char *rec, size_t reclen, size
     aad12(k, rec[0], plen, aad);
     cbc_mac(k, aad, data, plen, mac);
     {
-        br_hmac_key_context kc;
-        br_hmac_context hc;
+        struct ot_hmac_key kc;
+        struct ot_hmac hc;
         unsigned char dummy[48];
-        br_hmac_key_init(&kc, k->suite->mac, k->mac_key, ml);
-        br_hmac_init(&hc, &kc, 0);
-        br_hmac_update(&hc, data + plen, dlen - ml - 1 - plen);
-        br_hmac_out(&hc, dummy);
+        ot_hmac_key_init(&kc, k->suite->mac, k->mac_key, ml);
+        ot_hmac_init(&hc, &kc);
+        ot_hmac_update(&hc, data + plen, dlen - ml - 1 - plen);
+        ot_hmac_out(&hc, dummy);
     }
     diff = (unsigned char)!good;
     for (i = 0; i < ml; ++i) diff |= (unsigned char)(mac[i] ^ data[plen + i]);

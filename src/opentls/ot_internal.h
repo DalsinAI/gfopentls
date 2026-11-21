@@ -105,6 +105,26 @@ int ot_rsa_pss(const struct ot_impls *m, const br_rsa_public_key *pk, const br_h
 int ot_glue_has_ed25519(void);
 int ot_glue_ed25519(const unsigned char *sig, const unsigned char *pk, const void *msg, size_t len);
 
+/* ---- HMAC and HMAC-DRBG (ot_hmac.c) ---- */
+struct ot_hmac_key {
+    const br_hash_class *h;
+    unsigned char key[128];          /* the key, padded to the hash's block */
+};
+struct ot_hmac {
+    const struct ot_hmac_key *key;
+    br_hash_compat_context inner;
+};
+void ot_hmac_key_init(struct ot_hmac_key *k, const br_hash_class *h, const void *key, size_t len);
+void ot_hmac_init(struct ot_hmac *m, const struct ot_hmac_key *k);
+void ot_hmac_update(struct ot_hmac *m, const void *data, size_t len);
+size_t ot_hmac_out(struct ot_hmac *m, void *out);   /* the hash's output length */
+struct ot_drbg {
+    unsigned char k[32], v[32];
+};
+void ot_drbg_init(struct ot_drbg *d, const void *seed, size_t len);
+void ot_drbg_update(struct ot_drbg *d, const void *data, size_t len);
+void ot_drbg_generate(struct ot_drbg *d, void *out, size_t len);
+
 /* ---- the services card: gfopenservice.device's opentls.key/1 (ot_service.c) ---- */
 #define OTK_VERIFY    1
 #define OTK_KEYGEN    2
@@ -208,6 +228,11 @@ void ot_x509_free(struct ot_x509 *x);
 /* the first DNS name (or CN) of a certificate, for messages */
 void ot_cert_name(const unsigned char *der, size_t len, char *out, size_t outlen);
 int ot_cert_has_ip(const unsigned char *der, size_t len, const unsigned char *ip, size_t iplen);
+/* a certificate as a trust anchor takes it: the subject (whole DER) and
+ * the RSA or EC key, pointing into der, and whether it is a CA; 1, or 0
+ * when it cannot be one (ot_x509.c) */
+int ot_cert_anchor(const unsigned char *der, size_t len, const unsigned char **dn, size_t *dn_len,
+                   br_x509_pkey *pk, int *ca);
 /* the server certificate's SubjectPublicKeyInfo (DER, whole); 0 when it is not kept */
 int ot_x509_spki(const struct ot_x509 *x, const unsigned char **spki, size_t *len);
 

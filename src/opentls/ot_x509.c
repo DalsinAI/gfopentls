@@ -695,6 +695,21 @@ static unsigned by_anchor(struct ot_x509 *x, const struct leaf_parts *cur)
     return err;
 }
 
+int ot_cert_anchor(const unsigned char *der, size_t len, const unsigned char **dn, size_t *dn_len,
+                   br_x509_pkey *pk, int *ca)
+{
+    struct leaf_parts lp;
+    struct ext_info ei;
+    struct ot_key k;
+    if (!leaf_parse(der, len, &lp) || key_read(&lp.spki, &k)) return 0;
+    if (k.type != BR_KEYTYPE_RSA && k.type != BR_KEYTYPE_EC) return 0;
+    *dn = lp.subject.p;
+    *dn_len = lp.subject.len;
+    *pk = k.pk;
+    *ca = !read_exts(lp.exts, &ei) && ei.ca;
+    return 1;
+}
+
 #define CHECKS_NAME(c) ((c)->verify == OTV_FULL || (c)->verify == OTV_REPORT)
 
 /* the whole check of the chain the server sent: 0 when it passes */

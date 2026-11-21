@@ -81,7 +81,7 @@ mv -f "$OUT/lib/libbearssl68k.a.new" "$OUT/lib/libbearssl68k.a"
 OTSRC="$HERE/src/opentls/ot_core.c $HERE/src/opentls/ot_glue.c $HERE/src/opentls/ot_platform.c
        $HERE/src/opentls/ot_random.c $HERE/src/opentls/ot_trust.c $HERE/src/opentls/ot_x509.c
        $HERE/src/opentls/ot_tls13.c $HERE/src/opentls/ot_tls13_keys.c
-       $HERE/src/opentls/ot_service.c
+       $HERE/src/opentls/ot_service.c $HERE/src/opentls/ot_hmac.c
        $HERE/src/opencrypto_pss.c"
 WARN="-Wall -Wextra -Werror -Wno-unused-parameter"
 

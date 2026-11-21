@@ -4,141 +4,140 @@
  * MIT licensed and free. Copyright (c) 2026 AmiCradle Team. */
 #include "ot_internal.h"
 
-struct growbuf {
-    unsigned char *data;
-    size_t len, cap;
-    int failed;
-};
-
-static void grow_append(void *ctx, const void *buf, size_t len)
-{
-    struct growbuf *g = ctx;
-    if (g->failed) return;
-    if (g->len + len > g->cap) {
-        size_t cap = g->cap ? g->cap * 2 : 2048;
-        unsigned char *p;
-        while (cap < g->len + len) cap *= 2;
-        p = ot_alloc(cap);
-        if (!p) { g->failed = 1; return; }
-        if (g->len) memcpy(p, g->data, g->len);
-        ot_free(g->data);
-        g->data = p;
-        g->cap = cap;
-    }
-    memcpy(g->data + g->len, buf, len);
-    g->len += len;
-}
-
 /* One certificate (DER) to a trust anchor. Answers 1 added, 0 skipped
- * (a key BearSSL does not take), or OTERR_NOMEM. */
+ * (not a certificate, or a key GFOpenTLS does not take), or OTERR_NOMEM. */
 static LONG add_der(struct ot_anchors *a, const unsigned char *der, size_t len)
 {
-    br_x509_decoder_context dc;
-    struct growbuf dn;
-    const br_x509_pkey *pk;
+    const unsigned char *dn;
+    size_t dn_len, need;
+    br_x509_pkey pk;
     br_x509_trust_anchor *ta;
-    unsigned char *block;
-    size_t need;
+    unsigned char *block, *p;
+    int ca;
 
-    memset(&dn, 0, sizeof dn);
-    br_x509_decoder_init(&dc, grow_append, &dn);
-    br_x509_decoder_push(&dc, der, len);
-    pk = br_x509_decoder_get_pkey(&dc);
-    if (dn.failed) { ot_free(dn.data); return OTERR_NOMEM; }
-    if (!pk || !dn.len) { ot_free(dn.data); return 0; }
+    if (!ot_cert_anchor(der, len, &dn, &dn_len, &pk, &ca)) return 0;
     if (a->count == a->cap) {
         size_t cap = a->cap ? a->cap * 2 : 64;
         br_x509_trust_anchor *n = ot_alloc(cap * sizeof *n);
-        if (!n) { ot_free(dn.data); return OTERR_NOMEM; }
+        if (!n) return OTERR_NOMEM;
         if (a->count) memcpy(n, a->ta, a->count * sizeof *n);
         ot_free(a->ta);
         a->ta = n;
         a->cap = cap;
     }
-    need = dn.len;
-    if (pk->key_type == BR_KEYTYPE_RSA) need += pk->key.rsa.nlen + pk->key.rsa.elen;
-    else if (pk->key_type == BR_KEYTYPE_EC) need += pk->key.ec.qlen;
-    else { ot_free(dn.data); return 0; }
+    need = dn_len + (pk.key_type == BR_KEYTYPE_RSA ? pk.key.rsa.nlen + pk.key.rsa.elen : pk.key.ec.qlen);
     block = ot_alloc(need);
-    if (!block) { ot_free(dn.data); return OTERR_NOMEM; }
+    if (!block) return OTERR_NOMEM;
     ta = &a->ta[a->count];
     memset(ta, 0, sizeof *ta);
-    memcpy(block, dn.data, dn.len);
+    memcpy(block, dn, dn_len);
     ta->dn.data = block;
-    ta->dn.len = dn.len;
-    ta->flags = br_x509_decoder_isCA(&dc) ? BR_X509_TA_CA : 0;
-    ta->pkey.key_type = pk->key_type;
-    if (pk->key_type == BR_KEYTYPE_RSA) {
-        unsigned char *p = block + dn.len;
-        memcpy(p, pk->key.rsa.n, pk->key.rsa.nlen);
+    ta->dn.len = dn_len;
+    ta->flags = ca ? BR_X509_TA_CA : 0;
+    ta->pkey.key_type = pk.key_type;
+    p = block + dn_len;
+    if (pk.key_type == BR_KEYTYPE_RSA) {
+        memcpy(p, pk.key.rsa.n, pk.key.rsa.nlen);
         ta->pkey.key.rsa.n = p;
-        ta->pkey.key.rsa.nlen = pk->key.rsa.nlen;
-        p += pk->key.rsa.nlen;
-        memcpy(p, pk->key.rsa.e, pk->key.rsa.elen);
+        ta->pkey.key.rsa.nlen = pk.key.rsa.nlen;
+        p += pk.key.rsa.nlen;
+        memcpy(p, pk.key.rsa.e, pk.key.rsa.elen);
         ta->pkey.key.rsa.e = p;
-        ta->pkey.key.rsa.elen = pk->key.rsa.elen;
+        ta->pkey.key.rsa.elen = pk.key.rsa.elen;
     } else {
-        unsigned char *p = block + dn.len;
-        memcpy(p, pk->key.ec.q, pk->key.ec.qlen);
-        ta->pkey.key.ec.curve = pk->key.ec.curve;
+        memcpy(p, pk.key.ec.q, pk.key.ec.qlen);
+        ta->pkey.key.ec.curve = pk.key.ec.curve;
         ta->pkey.key.ec.q = p;
-        ta->pkey.key.ec.qlen = pk->key.ec.qlen;
+        ta->pkey.key.ec.qlen = pk.key.ec.qlen;
     }
     ++a->count;
-    ot_free(dn.data);
     return 1;
 }
 
-static int is_cert_name(const char *name)
+static int is_cert_name(const char *name, size_t len)
 {
-    return !strcmp(name, "CERTIFICATE") || !strcmp(name, "X509 CERTIFICATE")
-        || !strcmp(name, "TRUSTED CERTIFICATE");
+    static const char *const names[] = { "CERTIFICATE", "X509 CERTIFICATE", "TRUSTED CERTIFICATE" };
+    size_t i;
+    for (i = 0; i < 3; ++i)
+        if (strlen(names[i]) == len && !memcmp(names[i], name, len)) return 1;
+    return 0;
 }
 
-LONG ot_anchors_add_pem(struct ot_anchors *a, const unsigned char *pem, size_t len)
+/* where the text needle starts in p..end, or NULL */
+static const char *find(const char *p, const char *end, const char *needle)
 {
-    br_pem_decoder_context pc;
-    struct growbuf der;
-    LONG added = 0, rc;
-    int inobj = 0, final_newline = 0;
+    size_t n = strlen(needle);
+    for (; p + n <= end; ++p)
+        if (*p == needle[0] && !memcmp(p, needle, n)) return p;
+    return NULL;
+}
 
-    if (!a || (!pem && len)) return OTERR_ARGS;
-    memset(&der, 0, sizeof der);
-    br_pem_decoder_init(&pc);
-    while (len > 0 || !final_newline) {
-        size_t used;
-        if (len == 0) {     /* BearSSL wants the last line ended */
-            pem = (const unsigned char *)"\n";
-            len = 1;
-            final_newline = 1;
-        }
-        used = br_pem_decoder_push(&pc, pem, len);
-        pem += used;
-        len -= used;
-        switch (br_pem_decoder_event(&pc)) {
-        case BR_PEM_BEGIN_OBJ:
-            inobj = is_cert_name(br_pem_decoder_name(&pc));
-            der.len = 0;
-            der.failed = 0;
-            br_pem_decoder_setdest(&pc, inobj ? grow_append : NULL, inobj ? &der : NULL);
-            break;
-        case BR_PEM_END_OBJ:
-            if (inobj) {
-                if (der.failed) { ot_free(der.data); return OTERR_NOMEM; }
-                rc = add_der(a, der.data, der.len);
-                if (rc < 0) { ot_free(der.data); return rc; }
-                added += rc;
-            }
-            inobj = 0;
-            break;
-        case BR_PEM_ERROR:
-            ot_free(der.data);
-            return added ? added : OTERR_ARGS;
-        default:
-            break;
+static int b64_value(int ch)
+{
+    if (ch >= 'A' && ch <= 'Z') return ch - 'A';
+    if (ch >= 'a' && ch <= 'z') return ch - 'a' + 26;
+    if (ch >= '0' && ch <= '9') return ch - '0' + 52;
+    if (ch == '+') return 62;
+    if (ch == '/') return 63;
+    return -1;
+}
+
+/* base64 between p and end into out (room enough: 3/4 of the length);
+ * the bytes, or -1 when it is not base64 */
+static long b64_decode(const char *p, const char *end, unsigned char *out)
+{
+    unsigned long acc = 0;
+    int bits = 0, pad = 0;
+    long n = 0;
+    for (; p < end; ++p) {
+        int v;
+        if (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') continue;
+        if (*p == '=') { ++pad; continue; }
+        if (pad || (v = b64_value((unsigned char)*p)) < 0) return -1;
+        acc = (acc << 6) | (unsigned long)v;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out[n++] = (unsigned char)(acc >> bits);
         }
     }
-    ot_free(der.data);
+    return pad > 2 ? -1 : n;
+}
+
+/* PEM (RFC 7468): each "-----BEGIN name-----" to its "-----END name-----";
+ * certificates become anchors, other objects are passed over */
+LONG ot_anchors_add_pem(struct ot_anchors *a, const unsigned char *pem, size_t len)
+{
+    const char *p = (const char *)pem, *end = p + len;
+    LONG added = 0, rc;
+
+    if (!a || (!pem && len)) return OTERR_ARGS;
+    while ((p = find(p, end, "-----BEGIN ")) != NULL) {
+        const char *name = p + 11, *name_end = find(name, end, "-----"), *body, *stop, *nl;
+        char tail[80];
+        size_t nlen;
+        if (!name_end || ((nl = find(name, end, "\n")) != NULL && nl < name_end))
+            return added ? added : OTERR_ARGS;
+        nlen = (size_t)(name_end - name);
+        body = name_end + 5;
+        if (nlen + 14 > sizeof tail) return added ? added : OTERR_ARGS;
+        memcpy(tail, "-----END ", 9);
+        memcpy(tail + 9, name, nlen);
+        memcpy(tail + 9 + nlen, "-----", 6);
+        if (!(stop = find(body, end, tail))) return added ? added : OTERR_ARGS;
+        if (is_cert_name(name, nlen)) {
+            unsigned char *der = ot_alloc((size_t)(stop - body) * 3 / 4 + 3);
+            long n;
+            if (!der) return OTERR_NOMEM;
+            n = b64_decode(body, stop, der);
+            if (n < 0) { ot_free(der); return added ? added : OTERR_ARGS; }
+            rc = add_der(a, der, (size_t)n);
+            ot_free(der);
+            if (rc < 0) return rc;
+            added += rc;
+        }
+        p = stop + 14 + nlen;
+    }
     return added;
 }
 

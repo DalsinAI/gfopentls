@@ -13,7 +13,6 @@
  *
  * MIT licensed and free. Copyright (c) 2026 AmiCradle Team. */
 #include "ot_internal.h"
-#include "inner.h"      /* BearSSL's br_rsa_pkcs1_sig_unpad(), br_ecdsa_asn1_to_raw() */
 
 #ifdef __amigaos__
 #include <exec/execbase.h>
@@ -402,6 +401,25 @@ OT_HASH_CLASS(sha384, br_sha384_context, br_sha384_update, br_sha384_state, br_s
 OT_HASH_CLASS(sha512, br_sha512_context, br_sha384_update, br_sha384_state, br_sha384_set_state,
               OT_DESC(br_sha512_ID, 64, 64, 7) | BR_HASHDESC_MD_PADDING_BE | BR_HASHDESC_MD_PADDING_128)
 
+static void ot_enc32be(void *dst, uint32_t x)
+{
+    unsigned char *p = dst;
+    p[0] = (unsigned char)(x >> 24); p[1] = (unsigned char)(x >> 16); p[2] = (unsigned char)(x >> 8); p[3] = (unsigned char)x;
+}
+
+static uint32_t ot_dec32le(const void *src)
+{
+    const unsigned char *p = src;
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static void ot_enc64le(void *dst, uint64_t x)
+{
+    unsigned char *p = dst;
+    int i;
+    for (i = 0; i < 8; ++i) p[i] = (unsigned char)(x >> (8 * i));
+}
+
 /* ---- AES: CBC and CTR (GCM's counter mode) ---- */
 
 typedef struct {
@@ -454,7 +472,7 @@ static uint32_t aes_ctr_run(const br_block_ctr_class *const *ctx, const void *iv
     const ot_aes_context *c = (const void *)ctx;
     unsigned char block[16];
     memcpy(block, iv, 12);
-    br_enc32be(block + 12, cc);
+    ot_enc32be(block + 12, cc);
     if (len && g_aes(data, len, c->key, c->key_len, block, OC_AES_CTR) != 0)
         memset(data, 0, len);   /* never send what was not encrypted */
     return cc + (uint32_t)((len + 15) >> 4);
@@ -477,7 +495,7 @@ static const br_block_ctr_class ot_aes_ctr_vtable = {
 static uint32_t ot_chacha20_run(const void *key, const void *iv, uint32_t cc, void *data, size_t len)
 {
     const unsigned char *v = iv;
-    uint64_t counter = (uint64_t)cc | ((uint64_t)br_dec32le(v) << 32);
+    uint64_t counter = (uint64_t)cc | ((uint64_t)ot_dec32le(v) << 32);
     if (len) g_chacha(data, len, key, v + 4, counter);
     return cc + (uint32_t)((len + 63) >> 6);
 }
@@ -504,8 +522,8 @@ static void ot_poly1305_run(const void *key, const void *iv, void *data, size_t 
     memset(mac, 0, total);
     memcpy(mac, aad, aad_len);
     memcpy(mac + apad, data, len);
-    br_enc64le(mac + apad + dpad, (uint64_t)aad_len);
-    br_enc64le(mac + apad + dpad + 8, (uint64_t)len);
+    ot_enc64le(mac + apad + dpad, (uint64_t)aad_len);
+    ot_enc64le(mac + apad + dpad + 8, (uint64_t)len);
     g_poly(tag, mac, total, pkey);
     if (mac != small) ot_free(mac);
     if (!encrypt) ichacha(key, iv, 1, data, len);
@@ -537,6 +555,41 @@ static uint32_t ot_rsa_public(unsigned char *x, size_t xlen, const br_rsa_public
     return rc == 0;
 }
 
+/* PKCS #1 v1.5 signature padding (RFC 8017 section 9.2): 00 01 FF.. 00,
+ * then the DigestInfo for hash_oid (its length byte, then the OID; with
+ * the NULL parameter or without), or the bare hash when hash_oid is
+ * NULL. The hash goes to hash_out; 1 when the shape is right. */
+static uint32_t pkcs1_sig_unpad(const unsigned char *em, size_t len, const unsigned char *hash_oid,
+                                size_t hash_len, unsigned char *hash_out)
+{
+    size_t i = 2, oid_len, tail;
+    if (len < 11 + hash_len || em[0] != 0 || em[1] != 1) return 0;
+    while (i < len && em[i] == 0xFF) ++i;
+    if (i < 10 || i >= len || em[i] != 0) return 0;
+    ++i;
+    tail = len - i;
+    if (!hash_oid) {
+        if (tail != hash_len) return 0;
+    } else {
+        const unsigned char *d = em + i;
+        oid_len = hash_oid[0];
+        if (tail == oid_len + hash_len + 10) {          /* with NULL */
+            if (d[0] != 0x30 || d[1] != oid_len + hash_len + 8 || d[2] != 0x30 || d[3] != oid_len + 4
+                || d[4] != 0x06 || d[5] != oid_len || memcmp(d + 6, hash_oid + 1, oid_len)
+                || d[6 + oid_len] != 0x05 || d[7 + oid_len] != 0 || d[8 + oid_len] != 0x04
+                || d[9 + oid_len] != hash_len) return 0;
+        } else if (tail == oid_len + hash_len + 8) {    /* without */
+            if (d[0] != 0x30 || d[1] != oid_len + hash_len + 6 || d[2] != 0x30 || d[3] != oid_len + 2
+                || d[4] != 0x06 || d[5] != oid_len || memcmp(d + 6, hash_oid + 1, oid_len)
+                || d[6 + oid_len] != 0x04 || d[7 + oid_len] != hash_len) return 0;
+        } else {
+            return 0;
+        }
+    }
+    memcpy(hash_out, em + len - hash_len, hash_len);
+    return 1;
+}
+
 static uint32_t ot_rsa_pkcs1_vrfy(const unsigned char *x, size_t xlen,
                                   const unsigned char *hash_oid, size_t hash_len,
                                   const br_rsa_public_key *pk, unsigned char *hash_out)
@@ -549,18 +602,48 @@ static uint32_t ot_rsa_pkcs1_vrfy(const unsigned char *x, size_t xlen,
     sig = ot_alloc(nlen);
     if (!sig) return 0;
     if (g_rsa(sig, x, n, nlen, pk->e, pk->elen) == 0)
-        ok = br_rsa_pkcs1_sig_unpad(sig, nlen, hash_oid, hash_len, hash_out);
+        ok = pkcs1_sig_unpad(sig, nlen, hash_oid, hash_len, hash_out);
     ot_free(sig);
     return ok;
 }
 
 /* ---- ECDSA verification (P-256, P-384, P-521) ---- */
 
+/* an ECDSA signature's DER (SEQUENCE of two INTEGERs) as r and s of flen bytes each */
+static int ecdsa_der(const unsigned char *sig, size_t len, size_t flen, unsigned char *r, unsigned char *s)
+{
+    size_t pos = 2, k;
+    unsigned char *out[2];
+    out[0] = r;
+    out[1] = s;
+    if (len < 8 || sig[0] != 0x30) return 0;
+    if (sig[1] & 0x80) {                               /* P-521's may need a long form */
+        if (sig[1] != 0x81 || len < 3 || sig[2] != len - 3) return 0;
+        pos = 3;
+    } else if (sig[1] != len - 2) {
+        return 0;
+    }
+    for (k = 0; k < 2; ++k) {
+        size_t l;
+        const unsigned char *v;
+        if (pos + 2 > len || sig[pos] != 0x02) return 0;
+        l = sig[pos + 1];
+        if (l & 0x80 || pos + 2 + l > len || !l || (sig[pos + 2] & 0x80)) return 0;
+        v = sig + pos + 2;
+        pos += 2 + l;
+        while (l && !*v) { ++v; --l; }
+        if (l > flen) return 0;
+        memset(out[k], 0, flen);
+        memcpy(out[k] + flen - l, v, l);
+    }
+    return pos == len;
+}
+
 static uint32_t ot_ecdsa_vrfy_asn1(const br_ec_impl *impl, const void *hash, size_t hash_len,
                                    const br_ec_public_key *pk, const void *sig, size_t sig_len)
 {
-    unsigned char raw[160], r[66], s[66];
-    size_t flen, rlen, half;
+    unsigned char r[66], s[66];
+    size_t flen;
     int bits;
     (void)impl;
     switch (pk->curve) {
@@ -569,16 +652,7 @@ static uint32_t ot_ecdsa_vrfy_asn1(const br_ec_impl *impl, const void *hash, siz
     case BR_EC_secp521r1: bits = 521; flen = 66; break;
     default: return 0;
     }
-    if (pk->qlen != 1 + 2 * flen || pk->q[0] != 0x04 || sig_len > sizeof raw) return 0;
-    memcpy(raw, sig, sig_len);
-    rlen = br_ecdsa_asn1_to_raw(raw, sig_len);
-    if (rlen == 0 || (rlen & 1)) return 0;
-    half = rlen / 2;
-    if (half > flen) return 0;
-    memset(r, 0, sizeof r);
-    memset(s, 0, sizeof s);
-    memcpy(r + flen - half, raw, half);
-    memcpy(s + flen - half, raw + half, half);
+    if (pk->qlen != 1 + 2 * flen || pk->q[0] != 0x04 || !ecdsa_der(sig, sig_len, flen, r, s)) return 0;
     return g_ecdsa(bits, pk->q + 1, pk->q + 1 + flen, r, s, hash, hash_len) == 1;
 }
 
