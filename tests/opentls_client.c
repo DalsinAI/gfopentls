@@ -204,7 +204,7 @@ static int has_ping(const char *p, long n)
 /* OT_SessionHasTicket(), from revision 3; -1 when the library is older */
 static long has_ticket(struct OTSession *s)
 {
-    return (OT_Version() & 0xFFFF) >= 3 ? (long)OT_SessionHasTicket(s) : -1;
+    return OT_Version() >= 0x10003 ? (long)OT_SessionHasTicket(s) : -1;
 }
 
 static int hexpin(const char *s, UBYTE *out)
